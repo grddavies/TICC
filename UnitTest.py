@@ -1,16 +1,16 @@
 import unittest
 from TICC_solver import TICC
 import numpy as np
-import sys
 
 
 class TestStringMethods(unittest.TestCase):
 
     def test_example(self):
-        fname = "example_data.txt"
-        ticc = TICC(window_size = 1,number_of_clusters = 8, lambda_parameter = 11e-2, beta = 600, maxIters = 100,
-                    threshold = 2e-5, write_out_file = False, prefix_string = "output_folder/", num_proc=1)
-        (cluster_assignment, cluster_MRFs) = ticc.fit(input_file=fname)
+        X = np.loadtxt("example_data.txt", delimiter=",")
+        ticc = TICC(n_clusters=8, window_size=1, lambda_parameter=11e-2,
+                    beta=600, max_iter=100, threshold=2e-5, num_proc=4,
+                    random_state=102)
+        (cluster_assignment, cluster_MRFs) = ticc.fit(X)
         assign = np.loadtxt("UnitTest_Data/Results.txt")
         val = abs(assign - cluster_assignment)
         self.assertEqual(sum(val), 0)
@@ -26,6 +26,7 @@ class TestStringMethods(unittest.TestCase):
         # but this is for testing the code, so it is ok
         # TODO: figure out why larger blocks don't improve predictions more. Reference:
         # https://github.com/davidhallac/TICC/issues/18#issuecomment-384514116
+
         def test_streaming(block_size):
             test_stream = np.zeros(1000)
             test_stream[0:block_size] = cluster_assignment[0:block_size]
@@ -39,33 +40,30 @@ class TestStringMethods(unittest.TestCase):
         test_streaming(5)
 
         for i in range(8):
-            mrf = np.loadtxt("UnitTest_Data/cluster_"+str(i)+".txt",delimiter=',')
+            mrf = np.loadtxt("UnitTest_Data/cluster_{}.txt".format(i), delimiter=',')
             try:
                 np.testing.assert_array_almost_equal(mrf, cluster_MRFs[i], decimal=3)
             except AssertionError:
-                #Test failed
-                self.assertTrue(1==0)
-
+                # Test failed
+                self.assertTrue(1 == 0)
 
     def test_multiExample(self):
-        fname = "example_data.txt"
-        ticc = TICC(window_size = 5,number_of_clusters = 5, lambda_parameter = 11e-2, beta = 600, maxIters = 100,
-                    threshold = 2e-5, write_out_file = False, prefix_string = "output_folder/", num_proc=1)
-        (cluster_assignment, cluster_MRFs) = ticc.fit(input_file=fname)
+        X = np.loadtxt("example_data.txt", delimiter=",")
+        ticc = TICC(n_clusters=5, window_size=5, lambda_parameter=11e-2, beta=600,
+                    max_iter=100, threshold=2e-5, num_proc=4, random_state=102)
+        (cluster_assignment, cluster_MRFs) = ticc.fit(X)
         assign = np.loadtxt("UnitTest_Data/multiResults.txt")
         val = abs(assign - cluster_assignment)
         self.assertEqual(sum(val), 0)
 
         for i in range(5):
-            mrf = np.loadtxt("UnitTest_Data/multiCluster_"+str(i)+".txt",delimiter=',')
+            mrf = np.loadtxt("UnitTest_Data/multiCluster_{}.txt".format(i), delimiter=',')
             try:
                 np.testing.assert_array_almost_equal(mrf, cluster_MRFs[i], decimal=3)
             except AssertionError:
-                #Test failed
-                self.assertTrue(1==0)
+                # Test failed
+                self.assertTrue(1 == 0)
 
 
 if __name__ == '__main__':
     unittest.main()
-
-

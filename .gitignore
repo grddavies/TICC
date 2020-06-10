@@ -2,3 +2,7 @@
 
 # macOS stuff
 .DS_Store
+
+# Distribution/Packaging
+*.egg-info/
+*.egg

@@ -12,7 +12,7 @@ class TestStringMethods(unittest.TestCase):
                     random_state=102)
         X_stacked = ticc.stack_data(X)
         ticc.fit(X)
-        cluster_assignment, clusterMRFs = ticc.labels_, ticc.clusterMRFs_
+        cluster_assignment, clusters = ticc.labels_, ticc.clusters_
         # np.savetxt("UnitTest_Data/Results.txt", cluster_assignment, fmt='%d', delimiter=",")
         assign = np.loadtxt("test_data/Results.txt")
         val = abs(assign - cluster_assignment)
@@ -20,7 +20,7 @@ class TestStringMethods(unittest.TestCase):
 
         # Test prediction works with batch of data outside of `fit` method. Perhaps there is a better way
         # to test this in parallel so these are more like unit tests rather than integration tests?
-        batch_labels = ticc.predict_clusters(X_stacked[0:999, ])
+        batch_labels = ticc.predict(X_stacked[0:999, ])
         # np.savetxt("UnitTest_Data/batchLabels.txt", batch_labels, fmt="%d", delimiter=',')
         batch_val = abs(batch_labels - cluster_assignment[:999])
         self.assertEqual(sum(batch_val), 0)
@@ -36,7 +36,7 @@ class TestStringMethods(unittest.TestCase):
             test_stream[0:block_size] = cluster_assignment[0:block_size]
             for i in range(block_size, 1000):
                 point = X_stacked[i - block_size:i, ]
-                test_stream[i] = ticc.predict_clusters(point)[block_size - 1]
+                test_stream[i] = ticc.predict(point)[block_size - 1]
 
             percent_correct_streaming = 100 * sum(cluster_assignment[:1000] == test_stream) / 1000.0
             self.assertGreater(percent_correct_streaming, 0.9)
@@ -45,15 +45,15 @@ class TestStringMethods(unittest.TestCase):
 
         for i in range(8):
             # np.savetxt(f"UnitTest_Data/cluster_{i}.txt", clusterMRFs[i],  fmt='%.4e', delimiter=',')
-            mrf = np.loadtxt(f"test_data/cluster_{i}.txt", delimiter=',')
-            np.testing.assert_array_almost_equal(mrf, clusterMRFs[i], decimal=3)
+            MRF = np.loadtxt(f"test_data/cluster_{i}.txt", delimiter=',')
+            np.testing.assert_array_almost_equal(MRF, clusters[i].MRF_, decimal=3)
 
     def test_multiExample(self):
         X = np.loadtxt("test_data/example_data.txt", delimiter=",")
         ticc = TICC(n_clusters=5, window_size=5, lambda_parameter=11e-2, beta=600,
                     max_iter=100, num_proc=4, random_state=102)
         ticc.fit(X)
-        cluster_assignment, clusterMRFs = ticc.labels_, ticc.clusterMRFs_
+        cluster_assignment, clusters = ticc.labels_, ticc.clusters_
         # np.savetxt("UnitTest_Data/multiResults.txt", cluster_assignment, fmt='%d', delimiter=',')
         assign = np.loadtxt("test_data/multiResults.txt")
         val = abs(assign - cluster_assignment)
@@ -61,8 +61,8 @@ class TestStringMethods(unittest.TestCase):
 
         for i in range(5):
             # np.savetxt(f"UnitTest_Data/multiCluster_{i}.txt", clusterMRFs[i], fmt='%.4e', delimiter=",")
-            mrf = np.loadtxt(f"test_data/multiCluster_{i}.txt", delimiter=',')
-            np.testing.assert_array_almost_equal(mrf, clusterMRFs[i], decimal=3)
+            MRF = np.loadtxt(f"test_data/multiCluster_{i}.txt", delimiter=',')
+            np.testing.assert_array_almost_equal(MRF, clusters[i].MRF_, decimal=3)
 
 
 if __name__ == '__main__':

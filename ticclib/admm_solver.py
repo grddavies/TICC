@@ -22,7 +22,7 @@ class ADMMSolver:
     def ij2symmetric(self, i, j, size):
         return (size * (size + 1))/2 - (size-i)*((size - i + 1))/2 + j - i
 
-    def upper2Full(self, a):
+    def upper_to_full(self, a):
         n = int((-1 + np.sqrt(1 + 8*a.shape[0]))/2)
         A = np.zeros([n, n])
         A[np.triu_indices(n)] = a
@@ -40,7 +40,7 @@ class ADMMSolver:
 
     def ADMM_x(self):
         a = self.z-self.u
-        A = self.upper2Full(a)
+        A = self.upper_to_full(a)
         eta = self.rho
         x_update = self.Prox_logdet(self.S, A, eta)
         self.x = np.array(x_update).T.reshape(-1)
@@ -131,7 +131,6 @@ class ADMMSolver:
 
     # solve
     def __call__(self, maxIters, eps_abs, eps_rel, verbose):
-        num_iterations = 0
         self.status = 'Incomplete: max iterations reached'
         z_old = np.copy(self.z)
         self.ADMM_x()
@@ -150,7 +149,7 @@ class ADMMSolver:
                     break
                 new_rho = self.rho
                 if self.rho_update_func:
-                    new_rho = rho_update_func(self.rho, res_pri, e_pri, res_dual, e_dual)
+                    new_rho = self.rho_update_func(self.rho, res_pri, e_pri, res_dual, e_dual)
                 scale = self.rho / new_rho
                 rho = new_rho
                 self.u = scale*self.u
@@ -174,4 +173,4 @@ class ADMMSolver:
             rho = new_rho
             self.u = scale*self.u
 
-        return self.x
+        return self.upper_to_full(self.x)

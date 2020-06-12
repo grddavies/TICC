@@ -13,10 +13,10 @@ from ticclib.admm_solver import ADMMSolver
 
 
 def _update_clusters(LLE_node_vals, beta=1) -> np.array:
-    """Compute the minimum cost path given node costs in LLE_node_vals and edge
-    cost beta when swtiching to different cluster nodes.
-    This is equivalent to assigment of T samples to K clusters with switching
-    parameter beta.
+    """Assign T samples to K clusters with switching parameter beta.
+
+    This is equivalent to calculating the minimum cost path given node costs
+    in LLE_node_vals and edge cost beta when switching clusters.
 
     Parameters
     ----------
@@ -37,11 +37,11 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
     if beta < 0:
         raise ValueError("beta parameter should be >= 0 but got value  of %.3f"
                          % beta)
-    if beta == 0:
+    elif beta == 0:
         path = LLE_node_vals.argmin(axis=1)
         return path
 
-    (T, n_clusters) = LLE_node_vals.shape
+    T, k = LLE_node_vals.shape
     future_cost_vals = np.zeros(LLE_node_vals.shape)
 
     # compute future costs
@@ -49,7 +49,7 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
         j = i+1
         future_costs = future_cost_vals[j, :]
         lle_vals = LLE_node_vals[j, :]
-        for cluster in range(n_clusters):
+        for cluster in range(k):
             total_vals = future_costs + lle_vals + beta
             total_vals[cluster] -= beta
             future_cost_vals[i, cluster] = np.min(total_vals)
@@ -107,6 +107,9 @@ class _TICCluster:
 
     def __len__(self):
         return len(self.indices)
+
+    def __repr__(self):
+        return "%s(%r)" % (self.__class__, self.__dict__)
 
     def get_indices(self, y: np.array) -> np.array:
         self.indices = np.where(y == self.label)[0]

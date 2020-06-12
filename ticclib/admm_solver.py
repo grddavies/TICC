@@ -46,6 +46,7 @@ class ADMMSolver:
         self.x = np.array(x_update).T.reshape(-1)
 
     def ADMM_z(self, index_penalty=1):
+        """Consensus variable Z - a block Toeplitz matrix"""
         a = self.x + self.u
         probSize = self.numBlocks*self.sizeBlocks
         z_update = np.zeros(self.length)
@@ -110,7 +111,7 @@ class ADMMSolver:
     # Should stop if (||r|| <= e_pri) and (||s|| <= e_dual)
     # Returns (boolean shouldStop, primal residual value, primal threshold,
     #          dual residual value, dual threshold)
-    def CheckConvergence(self, z_old, e_abs, e_rel, verbose):
+    def CheckConvergence(self, z_old, e_abs, e_rel):
         norm = np.linalg.norm
         r = self.x - self.z
         s = self.rho * (self.z - z_old)
@@ -120,48 +121,23 @@ class ADMMSolver:
         # Primal and dual residuals
         res_pri = norm(r)
         res_dual = norm(s)
-        if verbose:
-            # Debugging information to print(convergence criteria values)
-            print('  r:', res_pri)
-            print('  e_pri:', e_pri)
-            print('  s:', res_dual)
-            print('  e_dual:', e_dual)
         stop = (res_pri <= e_pri) and (res_dual <= e_dual)
         return (stop, res_pri, e_pri, res_dual, e_dual)
 
     # solve
-    def __call__(self, maxIters, eps_abs, eps_rel, verbose):
+    def __call__(self, maxIters, eps_abs, eps_rel):
         self.status = 'Incomplete: max iterations reached'
         z_old = np.copy(self.z)
         self.ADMM_x()
         self.ADMM_z()
         self.ADMM_u()
 
-        if verbose:
-            for i in range(1, maxIters):
-                z_old = np.copy(self.z)
-                self.ADMM_x()
-                self.ADMM_z()
-                self.ADMM_u()
-                stop, res_pri, e_pri, res_dual, e_dual = self.CheckConvergence(z_old, eps_abs, eps_rel, verbose)
-                if stop:
-                    self.status = 'Optimal'
-                    break
-                new_rho = self.rho
-                if self.rho_update_func:
-                    new_rho = self.rho_update_func(self.rho, res_pri, e_pri, res_dual, e_dual)
-                scale = self.rho / new_rho
-                rho = new_rho
-                self.u = scale*self.u
-                # Debugging information prints current iteration #
-                print('Iteration %d' % i)
-
         for i in range(1, maxIters):
             z_old = np.copy(self.z)
             self.ADMM_x()
             self.ADMM_z()
             self.ADMM_u()
-            stop, res_pri, e_pri, res_dual, e_dual = self.CheckConvergence(z_old, eps_abs, eps_rel, verbose)
+            stop, res_pri, e_pri, res_dual, e_dual = self.CheckConvergence(z_old, eps_abs, eps_rel)
             if stop:
                 self.status = 'Optimal'
                 break

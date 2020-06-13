@@ -86,11 +86,22 @@ class TestGeneratePoints:
             except ValueError:
                 assert True
 
-    def test_pass_if_right_num_points(self):
+    def test_pass_if_X_size_correct(self):
         test_cases = [
             (60, [0, 1, 0], [20, 40, 60]),
+            (600, [0, 1, 0, 1], [20, 40, 500, 600]),
         ]
         for t, seg, b in test_cases:
             rd = RandomData(window_size=5, n_features=5)
-            result = rd.GeneratePoints(t, seg, b)
+            result, _ = rd.GeneratePoints(t, seg, b)
             assert result.shape == (t, rd.n_features)
+
+    def test_pass_if_y_size_correct(self):
+        test_cases = [
+            (60, [0, 1, 0], [20, 40, 60]),
+            (600, [0, 1, 0, 1], [20, 40, 500, 600]),
+        ]
+        for t, seg, b in test_cases:
+            rd = RandomData(window_size=5, n_features=5)
+            _, result = rd.GeneratePoints(t, seg, b)
+            assert result.shape == (t, 1)

@@ -94,6 +94,14 @@ class RandomData:
 
         break_points : list of integers
             points at which the sample labels change
+
+        Returns
+        -------
+        X : array (t_samples, n_features*window_size)
+            Synthetic multivariate timeseries data in n-dimensions.
+
+        y : array (t_samples, 1)
+            Vector containing the cluster labels for each time step.
         """
         # Check input vals
         if break_points[-1] != t_samples:
@@ -129,7 +137,8 @@ class RandomData:
                     a = np.zeros([(w-1)*n, 1])
                     for idx in range(w-1):
                         a[idx*n:(idx+1)*n, 0] = X[t - w+1+idx, :].reshape([n])
-                    new_mean = cluster_mean + np.dot(Sig21@np.linalg.inv(Sig11), (a-cluster_mean_stacked[:(w-1)*n, :]))
+                    new_mean = cluster_mean + np.dot(Sig21@np.linalg.inv(Sig11),
+                                                     (a-cluster_mean_stacked[:(w-1)*n, :]))
                     X[t, :] = rng.multivariate_normal(new_mean.reshape(n), cov_mat_tom)
 
                 elif t == 0:  # this is the first timepoint in seg
@@ -155,4 +164,9 @@ class RandomData:
                 else:
                     raise ValueError("What t is this?")
             start = break_points[seg-1]
-        return X
+        # Make label vector
+        y = np.zeros((t_samples, 1))
+        y[:break_points[0]] = segments[0]
+        for i in range(len(segments)-1):
+            y[break_points[i]:break_points[i+1]] = segments[i]
+        return X, y

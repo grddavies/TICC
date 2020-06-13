@@ -21,7 +21,7 @@ class TestGenerateInverse:
 
         assert result == (n*w, n*w)
 
-    def test_pass_if_upper_diags_tranposed(self):
+    def test_pass_if_upper_diags_transposed(self):
         test_cases = [
             (5, 10),
             (10, 10),
@@ -31,13 +31,14 @@ class TestGenerateInverse:
         for n, w in test_cases:
             # Block Toeplitz Matrix Theta
             Theta = RandomData(n_features=n, window_size=w).GenerateInverse()
-            # List of w columns of n*n blocks
-            block_col = np.split(Theta, w, axis=1)[0]
-            block_row = np.split(Theta, w, axis=0)[0]
-            for block in range(w):
-                A = np.split(block_col, w, axis=0)[block]
-                B = np.split(block_row, w, axis=1)[block]
-                np.testing.assert_array_equal(A.T, B)
+            block_chunked = [  # list of rows/cols of block matrix
+                np.split(col, w) for col in np.split(Theta, w, axis=1)
+                ]
+            for i in range(w):
+                for j in range(w-1):
+                    A = block_chunked[i][j]
+                    B = block_chunked[j][i]
+                    np.testing.assert_array_equal(A.T, B)
 
     def test_pass_if_block_toeplitz(self):
         test_cases = [

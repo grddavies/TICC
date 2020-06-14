@@ -1,6 +1,6 @@
-import multiprocessing as mp
 import operator
 import warnings
+from joblib import Parallel, delayed
 import numpy as np
 from scipy.special import logsumexp
 from sklearn import mixture
@@ -114,6 +114,14 @@ class _TICCluster:
     def get_indices(self, y: np.array) -> np.array:
         self.indices = np.where(y == self.label)[0]
 
+    def get_points(self, X):
+        return X[self.indices, :]
+
+    def get_S(self, X):
+        """Get covariance of points in cluster"""
+        self._S = np.cov(self.get_points(X), rowvar=False)
+        return self._S
+
     def get_mean(self, X):
         self.mean = X[self.indices, :].mean(axis=0)
 
@@ -123,12 +131,12 @@ class _TICCluster:
     def get_inv_cov_matrix(self):
         self.inv_cov_matrix = np.linalg.inv(self.computed_covariance)
 
-    def ll(self):
+    def lle(self, X):
         """Log-likelihood of point assignments to cluster
             `|P| * (logdet(theta) + tr(S @ theta))`
         """
         return len(self)*(np.log(np.linalg.det(self.MRF_))
-                          + np.trace(self._S @ self.MRF_))
+                          + np.trace(self.get_S(X) @ self.MRF_))
 
 
 class TICC(BaseEstimator):
@@ -186,14 +194,14 @@ class TICC(BaseEstimator):
         True when convergence was reached in ``fit``, False otherwise.
     """
     def __init__(self, *, n_clusters=5, window_size=10,  lambda_parameter=11e-2,
-                 beta=400, max_iter=1000, num_proc=1, cluster_reassignment=20,
+                 beta=400, max_iter=1000, n_jobs=None, cluster_reassignment=20,
                  random_state=None, copy_x=True):
         self.window_size = window_size
         self.n_clusters = n_clusters
         self.lambda_parameter = lambda_parameter
         self.beta = beta
         self.max_iter = max_iter
-        # self.num_proc = np.clip(num_proc, 1, mp.cpu_count())
+        self.n_jobs = n_jobs
         self.cluster_reassignment = cluster_reassignment
         self.random_state = random_state
         self.copy_x = copy_x
@@ -238,7 +246,7 @@ class TICC(BaseEstimator):
         for cluster in self.clusters_:
             cluster.get_mean(X)
             cluster.get_inv_cov_matrix()
-            cluster.get_logdet_theta()  # log(det(sigma2|1))
+            cluster.get_logdet_theta()
 
         LLEs = self._estimate_log_prob(X)
 
@@ -255,31 +263,35 @@ class TICC(BaseEstimator):
         Pass cluster points to ADMM solver to optimize, then update cluster
         parameters based on current assignments
         """
-        optRes = [None for i in range(self.n_clusters)]
+        def solver(cluster, X, lam, w, n):
+            """Call ADMMSolver instance.
+            ADMMSolver args are (maxIters, eps_abs, eps_rel)
+            """
+            solver = ADMMSolver(lam, w, n, 1, cluster.get_S(X))
+            return (cluster.label, solver(1000, 1e-6, 1e-6))
         w = self.window_size
         n = self.n_features_in_
-        for cluster in self.clusters_:
-            if len(cluster) != 0:
-                D_train = X[cluster.indices, :]
-                # Fit a model - OPTIMIZATION
-                probSize = w * n
-                lamb = np.zeros((probSize, probSize)) + self.lambda_parameter
-                # S is the empirical covariance of points in cluster
-                S = np.cov(D_train, rowvar=False)  # NOTE: data vars in cols
-                solver = ADMMSolver(lamb, w, n, 1, S)
-                # solver(maxIters, eps_abs, eps_rel)
-                optRes[cluster] = solver(1000, 1e-6, 1e-6)
-                S_est = optRes[cluster]  # BUG: Hangs, scipy >=1.3
-                # TODO: is this theta or inv(theta)? Check ADMMSolver
-                theta = np.linalg.inv(S_est)
+        lambda_ = np.zeros((w*n, w*n)) + self.lambda_parameter
+        optRes = Parallel(n_jobs=self.n_jobs)(
+            delayed(solver)(cluster, X, lambda_, w, n)
+            for cluster in self.clusters_ if len(cluster) > 0)
+        # Update cluster parameters
 
+        for cluster in self.clusters_:
+            try:
+                index = next((i for i, v in enumerate(optRes)
+                              if v[0] == cluster.label))
+                S_est = optRes[index][1]
+                cov_out = np.linalg.inv(S_est)
                 # Store the log-det-theta, covariance, inverse-covariance
-                # TODO: Check! these look wrong
-                cluster._S = S
-                cluster.logdet_theta = np.log(np.linalg.det(theta))
-                cluster.computed_covariance = theta
-                cluster.norm = np.linalg.norm(theta)
+                cluster.logdet_theta = np.log(np.linalg.det(cov_out))
+                cluster.computed_covariance = cov_out
+                cluster.norm = np.linalg.norm(cov_out)
                 cluster.MRF_ = S_est
+            except IndexError:
+                print(f"Cluster #{cluster.label} was empty")
+                # Cluster empty - no optimization result in list
+                pass
         return self
 
     def _empty_cluster_assign(self, clustered_points) -> np.array:
@@ -302,7 +314,7 @@ class TICC(BaseEstimator):
                 counter = (counter + 1) % len(valid_clusters)
                 print(f"cluster {cluster.label} is empty, moving points from "
                       f"cluster {source.label}")
-                # random points from that cluster
+                # Random points from that cluster
                 cluster.indices = random_state.choice(source.indices, size=n)
                 # Change point labels
                 clustered_points[cluster.indices] = cluster.label
@@ -317,10 +329,12 @@ class TICC(BaseEstimator):
         Parameters
         ----------
         X : array-like of shape (n_samples, n_features*window_size)
+            Stacked multivariate timeseries data.
 
         Returns
         -------
         log_prob : array, shape (n_samples, n_clusters)
+            Log-likelihood estimate for each sample belonging to each cluster.
         """
         log_prob = np.zeros((len(X), self.n_clusters))
         for cluster in self.clusters_:
@@ -328,8 +342,7 @@ class TICC(BaseEstimator):
             inv_cov_matrix = cluster.inv_cov_matrix
             log_det_cov = cluster.logdet_theta
             log_prob[:, cluster] = (
-                # TODO: Does sum(A*B, axis=1)
-                # perform better than einsum?
+                # TODO: Does sum(A*B, axis=1) perform better than einsum?
                 np.einsum('ij,ij->i',
                           X_@inv_cov_matrix,
                           X_,
@@ -356,6 +369,7 @@ class TICC(BaseEstimator):
         Returns
         -------
         self
+            The fitted estimator
         """
         if self.max_iter < 1:
             raise ValueError("Must have at least one iteration, increase "
@@ -378,9 +392,7 @@ class TICC(BaseEstimator):
             cluster.get_indices(clustered_points_old)
 
         # PERFORM TRAINING ITERATIONS
-        # TODO: joblib parallelization
         for i in range(1, self.max_iter+1):
-            # print("ITERATION # %d" % i)
             # M-Step > E-Step
             clustered_points = (self._m_step(X)
                                     ._e_step(X)
@@ -397,7 +409,7 @@ class TICC(BaseEstimator):
             clustered_points_old = clustered_points.copy()
             for cluster in self.clusters_:
                 cluster.get_indices(clustered_points)
-        self.labels_ = clustered_points
+        self.labels_ = clustered_points.astype(int)
         if not self.converged:
             warnings.warn("Model did not converge after %d iterations. Try "
                           "changing model parameters or increasing `max_iter`."
@@ -416,7 +428,8 @@ class TICC(BaseEstimator):
         Parameters
         ---------
         X_orig : {array-like, sparse matrix} (n_samples, n_features)
-            Timeseries to cluster (in ascending time order).
+            Timeseries to cluster (in ascending time order). For best
+            performance, standardize observations before fitting TICC.
 
         Returns
         -------
@@ -458,7 +471,7 @@ class TICC(BaseEstimator):
         return labels
 
     def score_samples(self, X) -> np.array:
-        """Compute the weighted log probabilities for each sample.
+        """Compute the log probabilities for each sample.
 
         Parameters
         ----------
@@ -489,7 +502,7 @@ class TICC(BaseEstimator):
         """
         return self.score_samples(X).mean()
 
-    def bic(self, X, threshold=2e-5) -> float:
+    def bic(self, X, thresh=2e-5) -> float:
         """Bayesian information criterion for the current model on the input X.
 
         Parameters
@@ -501,11 +514,9 @@ class TICC(BaseEstimator):
         bic : float
             The lower the better.
         """
-        lle_model = 0
-        clusterParams = {}
-        for c in self.clusters_:
-            lle_model += c.ll()
-            clusterParams[c.label] = np.sum(np.abs(c.MRF_) > threshold)
+        lle_model = sum([c.lle(X) for c in self.clusters_])
+        clusterParams = [np.sum(np.abs(c.MRF_) > thresh)
+                         for c in self.clusters_]
         curr_val = -1
         non_zero_params = 0
         for val in self.labels_:

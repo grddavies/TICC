@@ -193,9 +193,9 @@ class TICC(BaseEstimator):
     converged_ : bool
         True when convergence was reached in ``fit``, False otherwise.
     """
-    def __init__(self, *, n_clusters=5, window_size=10,  lambda_parameter=11e-2,
-                 beta=400, max_iter=1000, n_jobs=None, cluster_reassignment=20,
-                 random_state=None, copy_x=True):
+    def __init__(self, *, n_clusters=5, window_size=10, lambda_parameter=11e-2,
+                 beta=400, max_iter=100, n_jobs=None, cluster_reassignment=20,
+                 random_state=None, copy_x=True, verbose=False):
         self.window_size = window_size
         self.n_clusters = n_clusters
         self.lambda_parameter = lambda_parameter
@@ -206,6 +206,7 @@ class TICC(BaseEstimator):
         self.random_state = random_state
         self.copy_x = copy_x
         self.converged = False
+        self.verbose = verbose
 
     def _initialize(self, X) -> np.array:
         """Initialize the cluster assignments
@@ -232,7 +233,6 @@ class TICC(BaseEstimator):
         """E step of EM algorithm.
 
         Assign points in X to clusters given current cluster params.
-        Update cluster lengths.
 
         Parameters
         ----------
@@ -243,6 +243,7 @@ class TICC(BaseEstimator):
         clustered_points : array-like (n_samples,)
             cluster labels per point
         """
+        # Update cluster parameters
         for cluster in self.clusters_:
             cluster.get_mean(X)
             cluster.get_inv_cov_matrix()
@@ -263,20 +264,22 @@ class TICC(BaseEstimator):
         Pass cluster points to ADMM solver to optimize, then update cluster
         parameters based on current assignments
         """
-        def solver(cluster, X, lam, w, n):
+        def solver(cluster, lam, w, n):
             """Call ADMMSolver instance.
             ADMMSolver args are (maxIters, eps_abs, eps_rel)
             """
-            solver = ADMMSolver(lam, w, n, 1, cluster.get_S(X))
+            solver = ADMMSolver(lam, w, n, 1, cluster._S)
             return (cluster.label, solver(1000, 1e-6, 1e-6))
         w = self.window_size
         n = self.n_features_in_
         lambda_ = np.zeros((w*n, w*n)) + self.lambda_parameter
         optRes = Parallel(n_jobs=self.n_jobs)(
-            delayed(solver)(cluster, X, lambda_, w, n)
-            for cluster in self.clusters_ if len(cluster) > 0)
-        # Update cluster parameters
+            delayed(solver)(cluster, lambda_, w, n)
+            for cluster in self.clusters_ if len(cluster) > 1)
+        # optRes = [solver(cluster, lambda_, w, n)
+        #           for cluster in self.clusters_ if len(cluster) > 1]
 
+        # Update cluster parameters
         for cluster in self.clusters_:
             try:
                 index = next((i for i, v in enumerate(optRes)
@@ -288,38 +291,46 @@ class TICC(BaseEstimator):
                 cluster.computed_covariance = cov_out
                 cluster.norm = np.linalg.norm(cov_out)
                 cluster.MRF_ = S_est
-            except IndexError:
-                print(f"Cluster #{cluster.label} was empty")
+            except StopIteration:
+                if self.verbose:
+                    print(f"Cluster {cluster.label} was empty!")
                 # Cluster empty - no optimization result in list
                 pass
         return self
 
-    def _empty_cluster_assign(self, clustered_points) -> np.array:
+    def _empty_cluster_assign(self, clustered_points, rng) -> np.array:
         """Reassign points to empty clusters"""
-        random_state = check_random_state(self.random_state)
         n = self.cluster_reassignment
-        # Sort clusters by norm of covariance matrix
-        clusters_sorted = sorted(self.clusters_,
-                                 key=operator.attrgetter('norm'),
-                                 reverse=True)
-        # clusters that are not 0 as sorted by norm
-        valid_clusters = [c for c in self.clusters_ if len(c) != 0]
+        # clusters that are not 0 as sorted by norm of their cov matrix
+        valid_clusters = sorted([c for c in self.clusters_ if len(c) > 1],
+                                key=operator.attrgetter('norm'),
+                                reverse=True)
 
         # Add points to empty clusters
-        # assuming more non empty clusters than empty ones
         counter = 0
         for cluster in self.clusters_:
-            if len(cluster) == 0:
-                source = self.clusters_[clusters_sorted[counter]]
+            if len(cluster) < 2:
+                # Select a source cluster
+                source = self.clusters_[
+                    self.clusters_.index(valid_clusters[counter])
+                    ]
                 counter = (counter + 1) % len(valid_clusters)
-                print(f"cluster {cluster.label} is empty, moving points from "
-                      f"cluster {source.label}")
-                # Random points from that cluster
-                cluster.indices = random_state.choice(source.indices, size=n)
+                if self.verbose:
+                    print(f"Cluster {cluster.label} is empty, moving points "
+                          f"from Cluster {source.label}")
+                # Move random points from source to target cluster
+                cluster.indices = rng.choice(source.indices, size=n)
                 # Change point labels
                 clustered_points[cluster.indices] = cluster.label
-                # Clone source cluster covariance parameter into empty cluster
-                cluster.computed_covariance = source.computed_covariance
+                # Update the affected clusters' lengths
+                source.get_indices(clustered_points)
+                cluster.get_indices(clustered_points)
+                # Clone source covariance parameter into cluster
+                cluster.computed_covariance = (source.computed_covariance
+                                               + rng.random())
+                if self.verbose:
+                    print(f"Cluster {cluster.label} length = {len(cluster)} \n"
+                          f"Cluster {source.label} length = {len(source)}")
         return clustered_points
 
     def _estimate_log_prob(self, X) -> np.array:
@@ -386,29 +397,34 @@ class TICC(BaseEstimator):
             n_samples, _ = X.shape
 
         # Initialization - GMM to cluster
+        rng = np.random.default_rng(self.random_state)
         clustered_points_old = self._initialize(X)
         self.clusters_ = [_TICCluster(k) for k in range(self.n_clusters)]
         for cluster in self.clusters_:
             cluster.get_indices(clustered_points_old)
+            cluster.get_S(X)
 
         # PERFORM TRAINING ITERATIONS
         for i in range(1, self.max_iter+1):
+            if self.verbose:
+                print("Iteration %d" % i)
             # M-Step > E-Step
             clustered_points = (self._m_step(X)
                                     ._e_step(X)
                                 )
 
-            # Reassign to empty clusters
-            clustered_points = self._empty_cluster_assign(clustered_points)
-
             if np.array_equal(clustered_points_old, clustered_points):
                 self.converged = True
-                # print("Converged - Breaking Early")
                 break
 
+            # Reassign to empty clusters
+            clustered_points = self._empty_cluster_assign(clustered_points,
+                                                          rng)
             clustered_points_old = clustered_points.copy()
             for cluster in self.clusters_:
                 cluster.get_indices(clustered_points)
+                cluster.get_mean(X)
+                cluster.get_S(X)
         self.labels_ = clustered_points.astype(int)
         if not self.converged:
             warnings.warn("Model did not converge after %d iterations. Try "

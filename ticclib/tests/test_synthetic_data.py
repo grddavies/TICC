@@ -1,4 +1,3 @@
-import pytest
 import numpy as np
 
 from .synthetic_data import RandomData
@@ -35,10 +34,27 @@ class TestGenerateInverse:
                 np.split(col, w) for col in np.split(Theta, w, axis=1)
                 ]
             for i in range(w):
-                for j in range(w-1):
+                for j in range(w):
                     A = block_chunked[i][j]
                     B = block_chunked[j][i]
                     np.testing.assert_array_equal(A.T, B)
+
+    def test_pass_if_diags_symmetric(self):
+        test_cases = [
+            (5, 10),
+            (10, 10),
+            (3, 4),
+            (5, 1),
+        ]
+        for n, w in test_cases:
+            # Block Toeplitz Matrix Theta
+            Theta = RandomData(n_features=n, window_size=w).GenerateInverse()
+            block_chunked = [  # list of rows/cols of block matrix
+                np.split(col, w) for col in np.split(Theta, w, axis=1)
+                ]
+            for i in range(w):
+                A = block_chunked[i][i]
+                np.testing.assert_array_equal(A.T, A)
 
     def test_pass_if_block_toeplitz(self):
         test_cases = [

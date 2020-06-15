@@ -28,6 +28,7 @@ class RandomData:
         self.n_features = n_features
         self.window_size = window_size
         self.sparsity = sparsity
+        self.clusters = []
 
     def __repr__(self):
         return "%s(%r)" % (self.__class__, self.__dict__)
@@ -50,7 +51,7 @@ class RandomData:
         Returns
         -------
         S : array (n_features, n_features)
-            Randomly generated covariance matrix
+            Randomly generated covariance matrix.
         """
         n = self.n_features
         S = np.zeros((n, n))
@@ -107,7 +108,11 @@ class RandomData:
         lambda_ = np.abs(np.min(np.linalg.eigvals(Theta)))
         return Theta + (0.1 + lambda_)*np.identity(n*w)
 
-    def generate_points(self, t_samples, labels, break_points) -> np.array:
+    def generate_cluster_params(self, k_clusters):
+        self.clusters = [self.GenerateInverse() for k in range(k_clusters)]
+
+    def generate_points(self, t_samples, labels, break_points, recycle=False
+                        ) -> np.array:
         """Generate n-dimensional timeseries coming from k states, which are
         represented by partial correlation matrices.
 
@@ -122,6 +127,9 @@ class RandomData:
         break_points : list of integers
             points at which the sample labels change
 
+        recycle : bool, defaults to False
+            Reuse existing cluster parameters  if true. Requires prior call of
+            `generate_cluster_params` to set `clusters` attribute.
         Returns
         -------
         X : array (t_samples, n_features*window_size)
@@ -130,16 +138,22 @@ class RandomData:
         y : array (t_samples, 1)
             Vector containing the cluster labels for each time step.
         """
-        # Check input vals
+        # Check last break point
         if break_points[-1] != t_samples:
             raise ValueError("Last break at %d, there are %d points in "
                              "timeseries."
                              % (max(break_points), t_samples))
+
+        # Generate/retrieve cluster parameters
         k_clusters = len(set(labels))
-        # Generate cluster parameters
-        cluster_inverses = [
-            self.GenerateInverse() for k in range(k_clusters)
-            ]
+        if recycle:
+            if len(self.clusters) < k_clusters:
+                raise ValueError("Not enough clusters! %d Required to generate"
+                                 " points but only %d in self.clusters"
+                                 % (k_clusters, len(self.clusters)))
+        else:
+            self.clusters = [self.GenerateInverse() for k in range(k_clusters)]
+        cluster_inverses = self.clusters
         cluster_covariances = [
             np.linalg.inv(k) for k in cluster_inverses
             ]
@@ -191,8 +205,9 @@ class RandomData:
             start = break_points[seg-1]
 
         # Make label vector
-        y = np.zeros((t_samples, 1))
+        y = np.zeros((t_samples, ))
+        # First label in sequence
         y[:break_points[0]] = labels[0]
         for i in range(len(labels)-1):
-            y[break_points[i]:break_points[i+1]] = labels[i]
-        return X, y
+            y[break_points[i]:break_points[i+1]] = labels[i+1]
+        return X, y.astype(int)

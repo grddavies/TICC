@@ -120,7 +120,19 @@ class TestGeneratePoints:
         for t, seg, b in test_cases:
             rd = RandomData(window_size=5, n_features=5)
             _, result = rd.generate_points(t, seg, b)
-            assert result.shape == (t, 1)
+            assert result.shape == (t, )
+
+    def test_pass_if_y_labels_correct(self):
+        test_cases = [
+            (10, [0, 1, 0], [3, 7, 10],
+             [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]),
+            (20, [1, 0, 1, 0], [5, 10, 15, 20],
+             [1]*5 + [0]*5 + [1]*5 + [0]*5),
+        ]
+        for t, seg, b, expected in test_cases:
+            rd = RandomData(window_size=5, n_features=5)
+            _, y = rd.generate_points(t, seg, b)
+            assert y.tolist() == expected
 
     def test_pass_if_consistent_with_same_seed(self):
         test_cases = [
@@ -150,3 +162,18 @@ class TestGeneratePoints:
                                      X1, X2)
             # We want different points but same labels!
             np.testing.assert_array_equal(y1, y2)
+
+    def test_recycling_clusters_between_calls(self):
+        test_cases = [
+            (60, [0, 1, 0], [20, 40, 60], 0),
+            (60, [0, 1, 0], [20, 40, 60], 10),
+            (60, [0, 1, 0], [20, 40, 60], 100),
+        ]
+        for t, seg, b, seed in test_cases:
+            rdata = RandomData(seed)
+            rdata.generate_cluster_params(len(set(seg)))
+            X1, y1 = rdata.generate_points(t, seg, b, True)
+            C1 = rdata.clusters
+            X2, y2 = rdata.generate_points(t, seg, b, True)
+            C2 = rdata.clusters
+            assert C1 == C2

@@ -35,7 +35,7 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
     """
     # TODO: Optimize - bottleneck in fit method
     if beta < 0:
-        raise ValueError("beta parameter should be >= 0 but got value  of %.3f"
+        raise ValueError("beta parameter should be >= 0 but got value  of %.3g"
                          % beta)
     elif beta == 0:
         path = LLE_node_vals.argmin(axis=1)
@@ -87,8 +87,8 @@ class _TICCluster:
     ----------
     MRF_ : array (n*w, n*w)}, n = n_features, w = window_size
         Gaussian inverse covariance matrix that defines a Markov Random Field
-        encoding the structural representation of the cluster. This is a
-        symmetric block Toeplitz matrix
+        encoding the conditional dependency structre of the cluster. This is
+        takes the form of a symmetric block Toeplitz matrix.
 
     logdet_theta : float
         log(det(MRF_))
@@ -98,6 +98,9 @@ class _TICCluster:
 
     inv_cov_matrix : array
         how is diff from MRF?
+
+    mean : array (n_features * window_size, 1)
+        The mean value of each column of the cluster.
     """
     def __init__(self, label: int):
         self.label = label
@@ -160,19 +163,18 @@ class TICC(BaseEstimator):
         adjacent subsequences to be assigned to the same cluster.
 
     max_iter : int
-        Maximum number of iterations of the TICC algorithm for a single
-        run.
+        Maximum number of iterations of the TICC E-M algorithm for a single run.
 
     cluster_reassignment : int
         Number of points to reassign to empty clusters during ``fit``
 
-    random_state : int, RandomState instance, default=None
+    random_state : int, RandomState instance or None, optional default=None
         A pseudo random number generator used for the initialization of the
         cluster initialisation by gaussian mixture model and to select a point
         to be added to empty clusters during cluster training. Use an int to
         make the randomness deterministic.
 
-    copy_x : bool, default=True
+    copy_x : bool, default to True
         If copy_x is True (default), then the original data is
         not modified. If False, the original data is modified, and put back
         before the function returns, but small numerical differences may be
@@ -180,6 +182,9 @@ class TICC(BaseEstimator):
         the original data is not C-contiguous, a copy will be made even if
         copy_x is False. If the original data is sparse, but not in CSR format,
         a copy will be made even if copy_x is False.
+
+    verbose : bool, default to False
+        If true print out iteration number and any empty cluster reassignments.
 
     Attributes
     ----------
@@ -194,8 +199,8 @@ class TICC(BaseEstimator):
         True when convergence was reached in ``fit``, False otherwise.
     """
     def __init__(self, *, n_clusters=5, window_size=10, lambda_parameter=11e-2,
-                 beta=400, max_iter=100, n_jobs=None, cluster_reassignment=20,
-                 random_state=None, copy_x=True, verbose=False):
+                 beta=400, max_iter=100, n_jobs=None, cluster_reassignment=0.2,
+                 random_state=None, copy_x=True, verbose=True):
         self.window_size = window_size
         self.n_clusters = n_clusters
         self.lambda_parameter = lambda_parameter
@@ -205,7 +210,6 @@ class TICC(BaseEstimator):
         self.cluster_reassignment = cluster_reassignment
         self.random_state = random_state
         self.copy_x = copy_x
-        self.converged = False
         self.verbose = verbose
 
     def _initialize(self, X) -> np.array:
@@ -271,11 +275,12 @@ class TICC(BaseEstimator):
             solver = ADMMSolver(lam, w, n, 1, cluster._S)
             return (cluster.label, solver(1000, 1e-6, 1e-6))
         w = self.window_size
-        n = self.n_features_in_
+        n = self.n_features
         lambda_ = np.zeros((w*n, w*n)) + self.lambda_parameter
         optRes = Parallel(n_jobs=self.n_jobs)(
             delayed(solver)(cluster, lambda_, w, n)
             for cluster in self.clusters_ if len(cluster) > 1)
+        # # Non-parallel:
         # optRes = [solver(cluster, lambda_, w, n)
         #           for cluster in self.clusters_ if len(cluster) > 1]
 
@@ -300,7 +305,7 @@ class TICC(BaseEstimator):
 
     def _empty_cluster_assign(self, clustered_points, rng) -> np.array:
         """Reassign points to empty clusters"""
-        n = self.cluster_reassignment
+        p = self.cluster_reassignment
         # clusters that are not 0 as sorted by norm of their cov matrix
         valid_clusters = sorted([c for c in self.clusters_ if len(c) > 1],
                                 key=operator.attrgetter('norm'),
@@ -319,7 +324,9 @@ class TICC(BaseEstimator):
                     print(f"Cluster {cluster.label} is empty, moving points "
                           f"from Cluster {source.label}")
                 # Move random points from source to target cluster
-                cluster.indices = rng.choice(source.indices, size=n)
+                cluster.indices = rng.choice(source.indices,
+                                             size=int(len(source)*p)
+                                             )
                 # Change point labels
                 clustered_points[cluster.indices] = cluster.label
                 # Update the affected clusters' lengths
@@ -385,16 +392,15 @@ class TICC(BaseEstimator):
         if self.max_iter < 1:
             raise ValueError("Must have at least one iteration, increase "
                              "``max_iter``")
-        try:
-            n_samples, n_cols = X.shape
-            if n_cols != self.n_features_in_ * self.window_size:
-                raise ValueError("Input dimensions incorrect! Did you call "
-                                 "``stack_data()`` before ``fit``?")
+        X = self.stack_data(X)
 
-        except AttributeError:
-            # Stack the data into a n_samples by n_features*window_size array
-            X = self.stack_data(X)
-            n_samples, _ = X.shape
+        X = self._validate_data(X, accept_sparse='csr',
+                                dtype=[np.float64, np.float32],
+                                order='C', copy=self.copy_x,
+                                accept_large_sparse=False)
+        # validate data creates .n_features_in_ which is = n_features * w
+        self.n_features = self.n_features_in_//self.window_size
+        self.n_samples, _ = X.shape
 
         # Initialization - GMM to cluster
         rng = np.random.default_rng(self.random_state)
@@ -405,16 +411,16 @@ class TICC(BaseEstimator):
             cluster.get_S(X)
 
         # PERFORM TRAINING ITERATIONS
-        for i in range(1, self.max_iter+1):
+        for iters in range(1, self.max_iter+1):
             if self.verbose:
-                print("Iteration %d" % i)
+                print("Iteration %d" % iters)
             # M-Step > E-Step
             clustered_points = (self._m_step(X)
                                     ._e_step(X)
                                 )
 
             if np.array_equal(clustered_points_old, clustered_points):
-                self.converged = True
+                # Converged - Break Early
                 break
 
             # Reassign to empty clusters
@@ -426,7 +432,7 @@ class TICC(BaseEstimator):
                 cluster.get_mean(X)
                 cluster.get_S(X)
         self.labels_ = clustered_points.astype(int)
-        if not self.converged:
+        if iters == self.max_iter:
             warnings.warn("Model did not converge after %d iterations. Try "
                           "changing model parameters or increasing `max_iter`."
                           % self.max_iter, ConvergenceWarning)
@@ -456,12 +462,8 @@ class TICC(BaseEstimator):
             """Set first i rows of X to zero"""
             X[:i, :] = 0
             return X
-        X_orig = self._validate_data(X_orig, accept_sparse='csr',
-                                     dtype=[np.float64, np.float32],
-                                     order='C', copy=self.copy_x,
-                                     accept_large_sparse=False)
-        n = self.n_features_in_
-        X = np.zeros((X_orig.shape[0], n*self.window_size))
+        t_samples, n = X_orig.shape
+        X = np.zeros((t_samples, n*self.window_size))
         for i in range(self.window_size):
             X[:, i*n:(i+1)*n] = zero_rows(np.roll(X_orig, i, axis=0,), i)
         return X
@@ -481,6 +483,7 @@ class TICC(BaseEstimator):
             Component labels.
         """
         check_is_fitted(self)
+        X = self.stack_data(X)
         LLEs = self._estimate_log_prob(X)
         # label points
         labels = _update_clusters(LLEs, beta=self.beta)
@@ -501,6 +504,7 @@ class TICC(BaseEstimator):
             Log probabilities of each data point in X.
         """
         check_is_fitted(self)
+        X = self.stack_data(X)
         return logsumexp(self._estimate_log_prob(X), axis=1)
 
     def score(self, X, y=None) -> float:
@@ -530,6 +534,7 @@ class TICC(BaseEstimator):
         bic : float
             The lower the better.
         """
+        X = self.stack_data(X)
         lle_model = sum([c.lle(X) for c in self.clusters_])
         clusterParams = [np.sum(np.abs(c.MRF_) > thresh)
                          for c in self.clusters_]

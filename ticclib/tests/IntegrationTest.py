@@ -1,16 +1,15 @@
 import unittest
-from ticclib.TICC import TICC
+from ticclib.ticc import TICC
 import numpy as np
 
 
 class TestStringMethods(unittest.TestCase):
-
     def test_example(self):
         X = np.loadtxt("test_data/example_data.txt", delimiter=",")
         ticc = TICC(n_clusters=8, window_size=1, lambda_parameter=11e-2,
-                    beta=600, max_iter=100, num_proc=4,
-                    random_state=102)
-        X_stacked = ticc.stack_data(X)
+                    beta=600, max_iter=100, n_jobs=4,
+                    random_state=102, verbose=True)
+        # X_stacked = ticc.stack_data(X)
         ticc.fit(X)
         cluster_assignment, clusters = ticc.labels_, ticc.clusters_
         # np.savetxt("UnitTest_Data/Results.txt", cluster_assignment, fmt='%d', delimiter=",")
@@ -20,7 +19,7 @@ class TestStringMethods(unittest.TestCase):
 
         # Test prediction works with batch of data outside of `fit` method. Perhaps there is a better way
         # to test this in parallel so these are more like unit tests rather than integration tests?
-        batch_labels = ticc.predict(X_stacked[0:999, ])
+        batch_labels = ticc.predict(X[0:999, ])
         # np.savetxt("UnitTest_Data/batchLabels.txt", batch_labels, fmt="%d", delimiter=',')
         batch_val = abs(batch_labels - cluster_assignment[:999])
         self.assertEqual(sum(batch_val), 0)
@@ -35,7 +34,7 @@ class TestStringMethods(unittest.TestCase):
             test_stream = np.zeros(1000)
             test_stream[0:block_size] = cluster_assignment[0:block_size]
             for i in range(block_size, 1000):
-                point = X_stacked[i - block_size:i, ]
+                point = X[i - block_size:i, ]
                 test_stream[i] = ticc.predict(point)[block_size - 1]
 
             percent_correct_streaming = 100 * sum(cluster_assignment[:1000] == test_stream) / 1000.0
@@ -51,7 +50,8 @@ class TestStringMethods(unittest.TestCase):
     def test_multiExample(self):
         X = np.loadtxt("test_data/example_data.txt", delimiter=",")
         ticc = TICC(n_clusters=5, window_size=5, lambda_parameter=11e-2, beta=600,
-                    max_iter=100, num_proc=4, random_state=102)
+                    max_iter=100, n_jobs=4, random_state=102, verbose=True)
+        # X_stacked = ticc.stack_data(X)
         ticc.fit(X)
         cluster_assignment, clusters = ticc.labels_, ticc.clusters_
         # np.savetxt("UnitTest_Data/multiResults.txt", cluster_assignment, fmt='%d', delimiter=',')
@@ -63,6 +63,12 @@ class TestStringMethods(unittest.TestCase):
             # np.savetxt(f"UnitTest_Data/multiCluster_{i}.txt", clusterMRFs[i], fmt='%.4e', delimiter=",")
             MRF = np.loadtxt(f"test_data/multiCluster_{i}.txt", delimiter=',')
             np.testing.assert_array_almost_equal(MRF, clusters[i].MRF_, decimal=3)
+
+    def test_empty_cluster_handling(self):
+        X = np.load('test_data/example_empty_clusters.npy')
+        ticc = TICC(n_clusters=4, window_size=5, n_jobs=4, random_state=0)
+        # X_stacked = ticc.stack_data(X)
+        ticc.fit(X)
 
 
 if __name__ == '__main__':

@@ -33,7 +33,7 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
     path : array (n_samples, )
         equivalent of cluster assignments per sample
     """
-    # TODO: Optimize - bottleneck in fit method
+    # TODO: Imporve performance - bottleneck in fit method
     if beta < 0:
         raise ValueError("beta parameter should be >= 0 but got value  of %.3g"
                          % beta)
@@ -96,9 +96,6 @@ class _TICCluster:
     indices : list
         Indices of points assigned to cluster
 
-    inv_cov_matrix : array
-        how is diff from MRF?
-
     mean : array (n_features * window_size, 1)
         The mean value of each column of the cluster.
     """
@@ -114,25 +111,30 @@ class _TICCluster:
     def __repr__(self):
         return "%s(%r)" % (self.__class__, self.__dict__)
 
-    def get_indices(self, y: np.array) -> np.array:
+    def get_indices(self, y: np.array):
         self.indices = np.where(y == self.label)[0]
 
     def get_points(self, X):
         return X[self.indices, :]
 
     def get_S(self, X):
-        """Get covariance of points in cluster"""
+        """Get empirical covariance of points in cluster"""
         self._S = np.cov(self.get_points(X), rowvar=False)
         return self._S
 
     def get_mean(self, X):
         self.mean = X[self.indices, :].mean(axis=0)
 
-    def get_logdet_theta(self):
-        self.logdet_theta = np.log(np.linalg.det(self.computed_covariance))
+    def update_empirical_params(self, X, y):
+        self.get_indices(y)
+        self.get_mean(X)
+        self.get_S(X)
 
-    def get_inv_cov_matrix(self):
-        self.inv_cov_matrix = np.linalg.inv(self.computed_covariance)
+    def update_computed_cov(self, cov_mat):
+        """Store optimized covariance value"""
+        self.computed_covariance = cov_mat
+        self.norm = np.linalg.norm(cov_mat)
+        self.logdet_theta = np.log(np.linalg.det(cov_mat))
 
     def lle(self, X):
         """Log-likelihood of point assignments to cluster
@@ -163,10 +165,12 @@ class TICC(BaseEstimator):
         adjacent subsequences to be assigned to the same cluster.
 
     max_iter : int
-        Maximum number of iterations of the TICC E-M algorithm for a single run.
+        Maximum number of iterations of the TICC expectation maximization
+        algorithm for a single run.
 
-    cluster_reassignment : int
-        Number of points to reassign to empty clusters during ``fit``
+    cluster_reassignment : float (0, 1)
+        The proportion of points to move from a valid cluster to an empty
+        cluster during ``fit``.
 
     random_state : int, RandomState instance or None, optional default=None
         A pseudo random number generator used for the initialization of the
@@ -200,7 +204,7 @@ class TICC(BaseEstimator):
     """
     def __init__(self, *, n_clusters=5, window_size=10, lambda_parameter=11e-2,
                  beta=400, max_iter=100, n_jobs=None, cluster_reassignment=0.2,
-                 random_state=None, copy_x=True, verbose=True):
+                 random_state=None, copy_x=True, verbose=False):
         self.window_size = window_size
         self.n_clusters = n_clusters
         self.lambda_parameter = lambda_parameter
@@ -247,19 +251,12 @@ class TICC(BaseEstimator):
         clustered_points : array-like (n_samples,)
             cluster labels per point
         """
-        # Update cluster parameters
-        for cluster in self.clusters_:
-            cluster.get_mean(X)
-            cluster.get_inv_cov_matrix()
-            cluster.get_logdet_theta()
-
         LLEs = self._estimate_log_prob(X)
-
         # label points
         clustered_points = _update_clusters(LLEs, beta=self.beta)
         # Update cluster indices/lengths
         for cluster in self.clusters_:
-            cluster.get_indices(clustered_points)
+            cluster.update_empirical_params(X, clustered_points)
         return clustered_points
 
     def _m_step(self, X):
@@ -292,22 +289,19 @@ class TICC(BaseEstimator):
                 S_est = optRes[index][1]
                 cov_out = np.linalg.inv(S_est)
                 # Store the log-det-theta, covariance, inverse-covariance
-                cluster.logdet_theta = np.log(np.linalg.det(cov_out))
-                cluster.computed_covariance = cov_out
-                cluster.norm = np.linalg.norm(cov_out)
-                cluster.MRF_ = S_est
+                cluster.MRF_ = S_est  # inverse-covariance
+                cluster.update_computed_cov(cov_out)
             except StopIteration:
                 if self.verbose:
                     print(f"Cluster {cluster.label} was empty!")
                 # Cluster empty - no optimization result in list
                 pass
-        return self
 
-    def _empty_cluster_assign(self, clustered_points, rng) -> np.array:
+    def _empty_cluster_assign(self, clustered_points, rng):
         """Reassign points to empty clusters"""
         p = self.cluster_reassignment
         # clusters that are not 0 as sorted by norm of their cov matrix
-        valid_clusters = sorted([c for c in self.clusters_ if len(c) > 1],
+        valid_clusters = sorted([c for c in self.clusters_ if len(c) > 2],
                                 key=operator.attrgetter('norm'),
                                 reverse=True)
 
@@ -333,8 +327,9 @@ class TICC(BaseEstimator):
                 source.get_indices(clustered_points)
                 cluster.get_indices(clustered_points)
                 # Clone source covariance parameter into cluster
-                cluster.computed_covariance = (source.computed_covariance
-                                               + rng.random())
+                source_covar = (source.computed_covariance + rng.random())
+                cluster.update_computed_cov(source_covar)
+
                 if self.verbose:
                     print(f"Cluster {cluster.label} length = {len(cluster)} \n"
                           f"Cluster {source.label} length = {len(source)}")
@@ -357,7 +352,7 @@ class TICC(BaseEstimator):
         log_prob = np.zeros((len(X), self.n_clusters))
         for cluster in self.clusters_:
             X_ = X - cluster.mean
-            inv_cov_matrix = cluster.inv_cov_matrix
+            inv_cov_matrix = cluster.MRF_
             log_det_cov = cluster.logdet_theta
             log_prob[:, cluster] = (
                 # TODO: Does sum(A*B, axis=1) perform better than einsum?
@@ -392,45 +387,45 @@ class TICC(BaseEstimator):
         if self.max_iter < 1:
             raise ValueError("Must have at least one iteration, increase "
                              "``max_iter``")
+        X = self._validate_data(X, accept_sparse=False, dtype='numeric',
+                                order='C', copy=self.copy_x)
         X = self.stack_data(X)
-
-        X = self._validate_data(X, accept_sparse='csr',
-                                dtype=[np.float64, np.float32],
-                                order='C', copy=self.copy_x,
-                                accept_large_sparse=False)
-        # validate data creates .n_features_in_ which is = n_features * w
-        self.n_features = self.n_features_in_//self.window_size
+        self.n_features = self.n_features_in_
         self.n_samples, _ = X.shape
 
-        # Initialization - GMM to cluster
+        if sample_weight is not None:
+            sample_weight = np.array(sample_weight)
+            if sample_weight.shape != (self.n_samples, ):
+                raise ValueError("If sample weights passed, length must match "
+                                 "X input length")
+
+        # Initialization
         rng = np.random.default_rng(self.random_state)
-        clustered_points_old = self._initialize(X)
         self.clusters_ = [_TICCluster(k) for k in range(self.n_clusters)]
-        for cluster in self.clusters_:
-            cluster.get_indices(clustered_points_old)
-            cluster.get_S(X)
+        clustered_points_old = self._initialize(X)
 
         # PERFORM TRAINING ITERATIONS
         for iters in range(1, self.max_iter+1):
             if self.verbose:
                 print("Iteration %d" % iters)
-            # M-Step > E-Step
-            clustered_points = (self._m_step(X)
-                                    ._e_step(X)
-                                )
+            # Get empirical cluster params based on last assignments
+            for cluster in self.clusters_:
+                cluster.update_empirical_params(X, clustered_points_old)
+            # M-Step: Calculate optimal cluster parameters
+            self._m_step(X)
+            # E-step: Make assignments based on optimal parameters
+            clustered_points = self._e_step(X)
 
             if np.array_equal(clustered_points_old, clustered_points):
                 # Converged - Break Early
                 break
 
-            # Reassign to empty clusters
+            # Reassign points to any empty clusters
+            # NOTE: This changes empirical and optimal params of empty clusters
             clustered_points = self._empty_cluster_assign(clustered_points,
                                                           rng)
             clustered_points_old = clustered_points.copy()
-            for cluster in self.clusters_:
-                cluster.get_indices(clustered_points)
-                cluster.get_mean(X)
-                cluster.get_S(X)
+
         self.labels_ = clustered_points.astype(int)
         if iters == self.max_iter:
             warnings.warn("Model did not converge after %d iterations. Try "
@@ -483,6 +478,8 @@ class TICC(BaseEstimator):
             Component labels.
         """
         check_is_fitted(self)
+        X = self._validate_data(X, accept_sparse=False, dtype='numeric',
+                                order='C', copy=self.copy_x)
         X = self.stack_data(X)
         LLEs = self._estimate_log_prob(X)
         # label points

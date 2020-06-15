@@ -1,6 +1,6 @@
 import numpy as np
 
-from .synthetic_data import RandomData
+from ticclib.tests.synthetic_data import RandomData
 
 
 class TestGenerateInverse:
@@ -98,7 +98,7 @@ class TestGeneratePoints:
         ]
         for t, seg, b in test_cases:
             try:
-                RandomData().GeneratePoints(t, seg, b)
+                RandomData().generate_points(t, seg, b)
             except ValueError:
                 assert True
 
@@ -109,7 +109,7 @@ class TestGeneratePoints:
         ]
         for t, seg, b in test_cases:
             rd = RandomData(window_size=5, n_features=5)
-            result, _ = rd.GeneratePoints(t, seg, b)
+            result, _ = rd.generate_points(t, seg, b)
             assert result.shape == (t, rd.n_features)
 
     def test_pass_if_y_size_correct(self):
@@ -119,5 +119,34 @@ class TestGeneratePoints:
         ]
         for t, seg, b in test_cases:
             rd = RandomData(window_size=5, n_features=5)
-            _, result = rd.GeneratePoints(t, seg, b)
+            _, result = rd.generate_points(t, seg, b)
             assert result.shape == (t, 1)
+
+    def test_pass_if_consistent_with_same_seed(self):
+        test_cases = [
+            (60, [0, 1, 0], [20, 40, 60], 0),
+            (60, [0, 1, 0], [20, 40, 60], 1),
+            (60, [0, 1, 0], [20, 40, 60], 10),
+        ]
+        for t, seg, b, seed in test_cases:
+            X1, y1 = RandomData(seed).generate_points(t, seg, b)
+            X2, y2 = RandomData(seed).generate_points(t, seg, b)
+
+            np.testing.assert_array_equal(X1, X2)
+            np.testing.assert_array_equal(y1, y2)
+
+    def test_pass_if_generates_diff_points_each_call(self):
+        test_cases = [
+            (60, [0, 1, 0], [20, 40, 60], 0),
+            (60, [0, 1, 0], [20, 40, 60], 10),
+            (60, [0, 1, 0], [20, 40, 60], 100),
+        ]
+        for t, seg, b, seed in test_cases:
+            rd = RandomData(seed)
+            X1, y1 = rd.generate_points(t, seg, b)
+            X2, y2 = rd.generate_points(t, seg, b)
+            np.testing.assert_raises(AssertionError,
+                                     np.testing.assert_array_equal,
+                                     X1, X2)
+            # We want different points but same labels!
+            np.testing.assert_array_equal(y1, y2)

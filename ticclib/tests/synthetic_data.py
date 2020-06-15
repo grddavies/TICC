@@ -1,15 +1,30 @@
 import numpy as np
-from sklearn.utils import check_random_state
 from networkx import nx
 
 
 class RandomData:
-    """Class to synthesise random time-series data with
-    underlying graph properties
+    """Class to synthesise random multivariate time-series data.
+
+    Attributes:
+    ----------
+    seed : int or (default) None
+        Seed for random number generator.
+
+    n_features : int, defaults to 5
+        number of features in random data to be generated.
+
+    window_size : int, defaults to 8
+        Number of samples over with past points can exert an influence on
+        future points. Ie the span over which inter-time correlations between
+        features are considered.
+
+    sparsity : float, (0, 1) defaults to 0.2
+        The sparsity of the conditional independence networks generated.
     """
-    def __init__(self, random_state=None, n_features=5, window_size=8,
+    def __init__(self, seed=None, n_features=5, window_size=8,
                  sparsity=0.2):
-        self.random_state = random_state
+        self.seed = seed
+        self.rng = np.random.default_rng(seed)
         self.n_features = n_features
         self.window_size = window_size
         self.sparsity = sparsity
@@ -17,58 +32,70 @@ class RandomData:
     def __repr__(self):
         return "%s(%r)" % (self.__class__, self.__dict__)
 
-    def genInvCov(self, seed, low=0.3, upper=0.6, p=0.2, symmetric=True) -> np.array:
+    def genInvCov(self, low=0.3, upper=0.6, p=0.2, symmetric=True) -> np.array:
         """Generate inverse covariance matrices for n_features
 
-        Atrributes
+        Parameters
         ----------
+        low : float, default = 0.3
+            Lower bound of inverse covariance values between features.
+
+        upper : float, default = 0.6
+            Upper bound of inverse covariance values between features.
+
         p : float > 0, default = 0.2
-        Probability of edge between nodes in random graph, ie inverse
-        covariance matrix sparsity
+            Probability of edge between nodes in random graph, ie inverse
+        covariance matrix sparsity.
+
+        Returns
+        -------
+        S : array (n_features, n_features)
+            Randomly generated covariance matrix
         """
         n = self.n_features
-        random_state_ = check_random_state(seed)
-        rng = np.random.default_rng(self.random_state)
         S = np.zeros((n, n))
-        G = nx.erdos_renyi_graph(n, p, seed=random_state_)
+        seed = int(self.rng.integers(1000))
+        G = nx.erdos_renyi_graph(n, p, seed=seed)
         # Fill S with random values
         for e in G.edges:
-            value = (rng.integers(2)-0.5)*2*(low+(upper-low)*rng.random())
+            value = ((self.rng.integers(2)-0.5)
+                     * 2 * (low+(upper-low)*self.rng.random()))
             S[e[0], e[1]] = value
         if symmetric:
             S = S + S.T
         return S
 
-    def genRandInv(self, seed, low=0.3, upper=0.6, p=0.2) -> np.array:
+    def genRandInv(self, low=0.3, upper=0.6, p=0.2) -> np.array:
         n = self.n_features
-        rng = np.random.default_rng(seed)
         S = np.zeros((n, n))
         for i in range(n):
             for j in range(n):
-                if rng.random() < p:
-                    value = (rng.integers(2) - 0.5)*2*(low + (upper - low)*rng.random())
+                if self.rng.random() < p:
+                    value = ((self.rng.integers(2) - 0.5)*2
+                             * (low + (upper-low)*self.rng.random()))
                     S[i, j] = value
         return S
 
-    def GenerateInverse(self, seed=0) -> np.array:
+    def GenerateInverse(self) -> np.array:
         """Generate block Toeplitz inverse covariance matrix.
 
         Each block is (`n_features`*`n_features`)
-        There are `window_size` number of blocks
+        Number of blocks is equal to window size
+
+        Returns
+        -------
+        Theta : array (n * w, n * w)
+            Block Toeplitz inverse covariance matrix
         """
-        if isinstance(self.random_state, int):
-            seed += self.random_state
-        rng = np.random.default_rng(seed)
         n = self.n_features
         w = self.window_size
         p = self.sparsity
         Theta = np.zeros((n*w, n*w))
-        seeds = rng.choice(w, size=w, replace=False)
         # w independent n*n matrices of independent Erdos-Renyi directed random
         # graphs with probability p of being selected.
-        blocks = [self.genRandInv(seeds[i], p=p) for i in seeds]
+        blocks = [self.genRandInv(p=p) for i in range(w)]
         # A0 block has symmetry enforced
-        blocks[0] = self.genInvCov(seeds[0], p=p)
+        blocks[0] = self.genInvCov(p=p)
         for i in range(w):
             for j in range(w):
                 block_num = np.abs(i - j)
@@ -80,7 +107,7 @@ class RandomData:
         lambda_ = np.abs(np.min(np.linalg.eigvals(Theta)))
         return Theta + (0.1 + lambda_)*np.identity(n*w)
 
-    def GeneratePoints(self, t_samples, segments, break_points) -> np.array:
+    def generate_points(self, t_samples, labels, break_points) -> np.array:
         """Generate n-dimensional timeseries coming from k states, which are
         represented by partial correlation matrices.
 
@@ -89,7 +116,7 @@ class RandomData:
         t_samples : int
             Number of samples of n-dimensional data to generate.
 
-        segments : list of integers
+        labels : list of integers
             List of up to k labels to be attributed to each sample.
 
         break_points : list of integers
@@ -108,24 +135,24 @@ class RandomData:
             raise ValueError("Last break at %d, there are %d points in "
                              "timeseries."
                              % (max(break_points), t_samples))
-        k_clusters = len(set(segments))
+        k_clusters = len(set(labels))
         # Generate cluster parameters
         cluster_inverses = [
-            self.GenerateInverse(k) for k in range(k_clusters)
+            self.GenerateInverse() for k in range(k_clusters)
             ]
         cluster_covariances = [
             np.linalg.inv(k) for k in cluster_inverses
             ]
         n = self.n_features
         w = self.window_size
-        rng = np.random.default_rng(self.random_state)
+        rng = self.rng
         cluster_mean = np.zeros([n, 1])
         cluster_mean_stacked = np.zeros([n*w, 1])
         X = np.zeros((t_samples, self.n_features))
         start = 0
         for seg in range(len(break_points)):
             end = break_points[seg]
-            cluster = segments[seg]
+            cluster = labels[seg]
             for t in range(start, end):
                 if t >= w:
                     cov_matrix = cluster_covariances[cluster]
@@ -141,12 +168,12 @@ class RandomData:
                                                      (a-cluster_mean_stacked[:(w-1)*n, :]))
                     X[t, :] = rng.multivariate_normal(new_mean.reshape(n), cov_mat_tom)
 
-                elif t == 0:  # this is the first timepoint in seg
+                elif t == 0:  # first timepoint in seg
                     cov_matrix = cluster_covariances[cluster][:n, :n]
                     new_mean = cluster_mean_stacked[n*(w-1):n*w].reshape(n)
                     X[t, :] = rng.multivariate_normal(new_mean, cov_matrix)
 
-                elif t < w:
+                else:  # t < w
                     cov_matrix = cluster_covariances[cluster][:(t+1)*n, :(t+1)*n]
                     Sig22 = cov_matrix[t*n:(t+1)*n, t*n:(t+1)*n]
                     Sig11 = cov_matrix[:t*n, :t*n]
@@ -161,12 +188,11 @@ class RandomData:
                                 @ (a-cluster_mean_stacked[:t*n, :])
                                 ).reshape(n)
                     X[t, :] = rng.multivariate_normal(new_mean, cov_mat_tom)
-                else:
-                    raise ValueError("What t is this?")
             start = break_points[seg-1]
+
         # Make label vector
         y = np.zeros((t_samples, 1))
-        y[:break_points[0]] = segments[0]
-        for i in range(len(segments)-1):
-            y[break_points[i]:break_points[i+1]] = segments[i]
+        y[:break_points[0]] = labels[0]
+        for i in range(len(labels)-1):
+            y[break_points[i]:break_points[i+1]] = labels[i]
         return X, y

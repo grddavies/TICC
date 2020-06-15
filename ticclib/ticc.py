@@ -272,7 +272,7 @@ class TICC(BaseEstimator):
             solver = ADMMSolver(lam, w, n, 1, cluster._S)
             return (cluster.label, solver(1000, 1e-6, 1e-6))
         w = self.window_size
-        n = self.n_features
+        n = self.n_features_in_
         lambda_ = np.zeros((w*n, w*n)) + self.lambda_parameter
         optRes = Parallel(n_jobs=self.n_jobs)(
             delayed(solver)(cluster, lambda_, w, n)
@@ -387,15 +387,11 @@ class TICC(BaseEstimator):
         if self.max_iter < 1:
             raise ValueError("Must have at least one iteration, increase "
                              "``max_iter``")
-        X = self._validate_data(X, accept_sparse=False, dtype='numeric',
-                                order='C', copy=self.copy_x)
         X = self.stack_data(X)
-        self.n_features = self.n_features_in_
-        self.n_samples, _ = X.shape
 
         if sample_weight is not None:
             sample_weight = np.array(sample_weight)
-            if sample_weight.shape != (self.n_samples, ):
+            if sample_weight.shape != (len(X), ):
                 raise ValueError("If sample weights passed, length must match "
                                  "X input length")
 
@@ -457,7 +453,12 @@ class TICC(BaseEstimator):
             """Set first i rows of X to zero"""
             X[:i, :] = 0
             return X
-        t_samples, n = X_orig.shape
+        X_orig = self._validate_data(X_orig, accept_sparse=False, 
+                                     dtype='numeric', order='C',
+                                     copy=self.copy_x,
+                                     ensure_min_features=2)
+        t_samples, _ = X_orig.shape
+        n = self.n_features_in_
         X = np.zeros((t_samples, n*self.window_size))
         for i in range(self.window_size):
             X[:, i*n:(i+1)*n] = zero_rows(np.roll(X_orig, i, axis=0,), i)
@@ -478,8 +479,6 @@ class TICC(BaseEstimator):
             Component labels.
         """
         check_is_fitted(self)
-        X = self._validate_data(X, accept_sparse=False, dtype='numeric',
-                                order='C', copy=self.copy_x)
         X = self.stack_data(X)
         LLEs = self._estimate_log_prob(X)
         # label points

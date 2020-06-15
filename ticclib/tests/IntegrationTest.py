@@ -65,6 +65,7 @@ class TestStringMethods(unittest.TestCase):
             np.testing.assert_array_almost_equal(MRF, clusters[i].MRF_, decimal=3)
 
     def test_empty_cluster_handling(self):
+        # We check if an error is thrown during handling of empty clusters
         X = np.load('test_data/example_empty_clusters.npy')
         ticc = TICC(n_clusters=4, window_size=5, n_jobs=4, random_state=0)
         # X_stacked = ticc.stack_data(X)

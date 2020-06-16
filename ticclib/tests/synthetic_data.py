@@ -56,7 +56,7 @@ class RandomData:
         n = self.n_features
         S = np.zeros((n, n))
         seed = int(self.rng.integers(1000))
-        G = nx.erdos_renyi_graph(n, p, seed=seed)
+        G = nx.fast_gnp_random_graph(n, p, seed=seed)
         # Fill S with random values
         for e in G.edges:
             value = ((self.rng.integers(2)-0.5)
@@ -157,9 +157,11 @@ class RandomData:
         cluster_covariances = [
             np.linalg.inv(k) for k in cluster_inverses
             ]
+        # Parameter aliases
         n = self.n_features
         w = self.window_size
         rng = self.rng
+        # Initialize
         cluster_mean = np.zeros([n, 1])
         cluster_mean_stacked = np.zeros([n*w, 1])
         X = np.zeros((t_samples, self.n_features))
@@ -168,6 +170,7 @@ class RandomData:
             end = break_points[seg]
             cluster = labels[seg]
             for t in range(start, end):
+                # print(f"seg {seg}, t {t}, cluster {cluster}, {(start, end)}")  # Debug
                 if t >= w:
                     cov_matrix = cluster_covariances[cluster]
                     Sig22 = cov_matrix[(w-1)*n:(w)*n, (w-1)*n:(w)*n]
@@ -182,7 +185,7 @@ class RandomData:
                                                      (a-cluster_mean_stacked[:(w-1)*n, :]))
                     X[t, :] = rng.multivariate_normal(new_mean.reshape(n), cov_mat_tom)
 
-                elif t == 0:  # first timepoint in seg
+                elif t == 0:  # first timepoint
                     cov_matrix = cluster_covariances[cluster][:n, :n]
                     new_mean = cluster_mean_stacked[n*(w-1):n*w].reshape(n)
                     X[t, :] = rng.multivariate_normal(new_mean, cov_matrix)
@@ -202,7 +205,7 @@ class RandomData:
                                 @ (a-cluster_mean_stacked[:t*n, :])
                                 ).reshape(n)
                     X[t, :] = rng.multivariate_normal(new_mean, cov_mat_tom)
-            start = break_points[seg-1]
+            start = break_points[seg]
 
         # Make label vector
         y = np.zeros((t_samples, ))

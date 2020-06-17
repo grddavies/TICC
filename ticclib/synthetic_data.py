@@ -31,9 +31,9 @@ class RandomData:
         self.clusters = []
 
     def __repr__(self):
-        return "%s(%r)" % (self.__class__, self.__dict__)
+        return "%s(%r)" % (self.__class__, self.__dict__.keys())
 
-    def genInvCov(self, low=0.3, upper=0.6, p=0.2, symmetric=True) -> np.array:
+    def inv_cov(self, low=0.3, upper=0.6, p=0.2, symmetric=True) -> np.array:
         """Generate inverse covariance matrices for n_features
 
         Parameters
@@ -66,7 +66,7 @@ class RandomData:
             S = S + S.T
         return S
 
-    def genRandInv(self, low=0.3, upper=0.6, p=0.2) -> np.array:
+    def rand_inverse(self, low=0.3, upper=0.6, p=0.2) -> np.array:
         n = self.n_features
         S = np.zeros((n, n))
         for i in range(n):
@@ -77,7 +77,7 @@ class RandomData:
                     S[i, j] = value
         return S
 
-    def GenerateInverse(self) -> np.array:
+    def block_toeplitz(self) -> np.array:
         """Generate block Toeplitz inverse covariance matrix.
 
         Each block is (`n_features`*`n_features`)
@@ -94,9 +94,9 @@ class RandomData:
         Theta = np.zeros((n*w, n*w))
         # w independent n*n matrices of independent Erdos-Renyi directed random
         # graphs with probability p of being selected.
-        blocks = [self.genRandInv(p=p) for i in range(w)]
+        blocks = [self.rand_inverse(p=p) for i in range(w)]
         # A0 block has symmetry enforced
-        blocks[0] = self.genInvCov(p=p)
+        blocks[0] = self.inv_cov(p=p)
         for i in range(w):
             for j in range(w):
                 block_num = np.abs(i - j)
@@ -108,24 +108,27 @@ class RandomData:
         lambda_ = np.abs(np.min(np.linalg.eigvals(Theta)))
         return Theta + (0.1 + lambda_)*np.identity(n*w)
 
-    def generate_cluster_params(self, k_clusters):
-        self.clusters = [self.GenerateInverse() for k in range(k_clusters)]
+    def generate_cluster_params(self, k_clusters, sort=True):
+        self.clusters = [self.block_toeplitz() for k in range(k_clusters)]
+        if sort:
+            self.clusters = sorted(
+                self.clusters,
+                key=lambda x: np.linalg.norm(np.linalg.inv(x)),
+                reverse=True)
 
-    def generate_points(self, t_samples, labels, break_points, recycle=False
+    def generate_points(self, labels, break_points, recycle=False
                         ) -> np.array:
         """Generate n-dimensional timeseries coming from k states, which are
         represented by partial correlation matrices.
 
         Parameters
         ----------
-        t_samples : int
-            Number of samples of n-dimensional data to generate.
-
         labels : list of integers
             List of up to k labels to be attributed to each sample.
 
         break_points : list of integers
-            points at which the sample labels change
+            Points at which the sample labels change. Dataset ends at last
+            break point.
 
         recycle : bool, defaults to False
             Reuse existing cluster parameters  if true. Requires prior call of
@@ -138,12 +141,11 @@ class RandomData:
         y : array (t_samples, 1)
             Vector containing the cluster labels for each time step.
         """
-        # Check last break point
-        if break_points[-1] != t_samples:
-            raise ValueError("Last break at %d, there are %d points in "
-                             "timeseries."
-                             % (max(break_points), t_samples))
-
+        if len(break_points) != len(labels):
+            raise ValueError(f"Specified {len(labels)} segments with `labels`"
+                             f"argument, and {len(break_points)} break points "
+                             "- ensure the same number of segments and break "
+                             "points are passed")
         # Generate/retrieve cluster parameters
         k_clusters = len(set(labels))
         if recycle:
@@ -152,12 +154,13 @@ class RandomData:
                                  " points but only %d in self.clusters"
                                  % (k_clusters, len(self.clusters)))
         else:
-            self.clusters = [self.GenerateInverse() for k in range(k_clusters)]
+            self.generate_cluster_params(k_clusters)
         cluster_inverses = self.clusters
         cluster_covariances = [
             np.linalg.inv(k) for k in cluster_inverses
             ]
         # Parameter aliases
+        t_samples = break_points[-1]
         n = self.n_features
         w = self.window_size
         rng = self.rng

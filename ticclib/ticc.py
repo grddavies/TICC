@@ -1,6 +1,5 @@
 import operator
 import warnings
-from joblib import Parallel, delayed
 import numpy as np
 from scipy.special import logsumexp
 from sklearn import mixture
@@ -8,6 +7,7 @@ from sklearn.base import BaseEstimator
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import ConvergenceWarning
+from joblib import Parallel, delayed
 
 from ticclib.admm_solver import ADMMSolver
 
@@ -33,7 +33,7 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
     path : array (n_samples, )
         equivalent of cluster assignments per sample
     """
-    # TODO: Imporve performance - bottleneck in fit method
+    # TODO: Improve performance - bottleneck in fit method
     if beta < 0:
         raise ValueError("beta parameter should be >= 0 but got value  of %.3g"
                          % beta)
@@ -72,7 +72,7 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
         path[i+1] = np.argmin(total_vals)
 
     # return the computed path
-    return path
+    return path.astype(int)
 
 
 class _TICCluster:
@@ -81,13 +81,13 @@ class _TICCluster:
     Parameters:
     ----------
     label : int
-        numeric label to identify cluster.
+        numeric label to identify cluster. Used for indexing.
 
     Attributes:
     ----------
     MRF_ : array (n*w, n*w)}, n = n_features, w = window_size
         Gaussian inverse covariance matrix that defines a Markov Random Field
-        encoding the conditional dependency structre of the cluster. This is
+        encoding the conditional dependency structure of the cluster. This is
         takes the form of a symmetric block Toeplitz matrix.
 
     logdet_theta : float
@@ -101,6 +101,12 @@ class _TICCluster:
     """
     def __init__(self, label: int):
         self.label = label
+        self.MRF_ = np.array([])
+        self.indices = np.array([])
+        self._S = np.array([])
+        self.mean = np.array([])
+        self.norm = 0.0
+        self.logdet_theta = 0.0
 
     def __index__(self):
         return self.label
@@ -109,10 +115,15 @@ class _TICCluster:
         return len(self.indices)
 
     def __repr__(self):
-        return "%s(%r)" % (self.__class__, self.__dict__)
+        return "%s(%r)" % (self.__class__, self.__dict__.keys())
+
+    def change_label(self, x):
+        self.label = x
+        return self
 
     def get_indices(self, y: np.array):
         self.indices = np.where(y == self.label)[0]
+        return self
 
     def get_points(self, X):
         return X[self.indices, :]
@@ -124,6 +135,7 @@ class _TICCluster:
 
     def get_mean(self, X):
         self.mean = X[self.indices, :].mean(axis=0)
+        return self
 
     def update_empirical_params(self, X, y):
         self.get_indices(y)
@@ -142,6 +154,16 @@ class _TICCluster:
         """
         return len(self)*(np.log(np.linalg.det(self.MRF_))
                           + np.trace(self.get_S(X) @ self.MRF_))
+
+    def split_theta(self, w) -> np.array:
+        """Split the first n columns of the the theta matrix (which defines
+        a MRF) into w arrays of shape (n, n). Each of these arrays represents
+        the conditional indipendence of the n variables across a timeframe.
+        The first array represents relationship between concurrent values of 
+        the n features. Each subsequent array shows how a feature relates to
+        future values of the other features.
+        """
+        return np.split(np.split(self.MRF_, w, axis=1)[0], w)
 
 
 class TICC(BaseEstimator):
@@ -231,9 +253,9 @@ class TICC(BaseEstimator):
         random_state_ = check_random_state(self.random_state)
         gmm = mixture.GaussianMixture(n_components=self.n_clusters,
                                       covariance_type="full",
-                                      random_state=random_state_
+                                      random_state=random_state_,
+                                      n_init=10,
                                       )
-
         clustered_points = gmm.fit_predict(X)
         return clustered_points
 
@@ -251,6 +273,8 @@ class TICC(BaseEstimator):
         clustered_points : array-like (n_samples,)
             cluster labels per point
         """
+        # Sort clusters by decreasing covariance norm
+        self._sort_clusters()
         LLEs = self._estimate_log_prob(X)
         # label points
         clustered_points = _update_clusters(LLEs, beta=self.beta)
@@ -271,6 +295,7 @@ class TICC(BaseEstimator):
             """
             solver = ADMMSolver(lam, w, n, 1, cluster._S)
             return (cluster.label, solver(1000, 1e-6, 1e-6))
+
         w = self.window_size
         n = self.n_features_in_
         lambda_ = np.zeros((w*n, w*n)) + self.lambda_parameter
@@ -309,7 +334,7 @@ class TICC(BaseEstimator):
         counter = 0
         for cluster in self.clusters_:
             if len(cluster) < 2:
-                # Select a source cluster
+                # Select a source cluster (must be valid)
                 source = self.clusters_[
                     self.clusters_.index(valid_clusters[counter])
                     ]
@@ -327,11 +352,12 @@ class TICC(BaseEstimator):
                 source.get_indices(clustered_points)
                 cluster.get_indices(clustered_points)
                 # Clone source covariance parameter into cluster
-                source_covar = (source.computed_covariance + rng.random())
-                cluster.update_computed_cov(source_covar)
+                source_covar = source.computed_covariance
+                cluster.update_computed_cov(rng.choice(source_covar,
+                                                       source_covar.shape))
 
                 if self.verbose:
-                    print(f"Cluster {cluster.label} length = {len(cluster)} \n"
+                    print(f"Cluster {cluster.label} length = {len(cluster)}\n"
                           f"Cluster {source.label} length = {len(source)}")
         return clustered_points
 
@@ -364,6 +390,15 @@ class TICC(BaseEstimator):
             )
         return log_prob
 
+    def _sort_clusters(self):
+        """Sort clusters by decreasing computed covariance norm and relabel"""
+        self.clusters_ = sorted(self.clusters_,
+                                key=operator.attrgetter('norm'),
+                                reverse=True)
+        self.clusters_ = [
+            c.change_label(i) for i, c in enumerate(self.clusters_)
+            ]
+
     def fit(self, X, y=None, sample_weight=None):
         """Compute Toeplitz Inverse Covariance-Based Clustering.
 
@@ -390,12 +425,13 @@ class TICC(BaseEstimator):
         X = self.stack_data(X)
 
         if sample_weight is not None:
-            sample_weight = np.array(sample_weight)
+            sample_weight = np.asarray(sample_weight)
             if sample_weight.shape != (len(X), ):
                 raise ValueError("If sample weights passed, length must match "
                                  "X input length")
 
         # Initialization
+        self.converged_ = False
         rng = np.random.default_rng(self.random_state)
         self.clusters_ = [_TICCluster(k) for k in range(self.n_clusters)]
         clustered_points_old = self._initialize(X)
@@ -414,16 +450,15 @@ class TICC(BaseEstimator):
 
             if np.array_equal(clustered_points_old, clustered_points):
                 # Converged - Break Early
+                self.converged_ = True
                 break
 
             # Reassign points to any empty clusters
             # NOTE: This changes empirical and optimal params of empty clusters
-            clustered_points = self._empty_cluster_assign(clustered_points,
-                                                          rng)
-            clustered_points_old = clustered_points.copy()
-
+            clustered_points_old = self._empty_cluster_assign(clustered_points,
+                                                              rng)
         self.labels_ = clustered_points.astype(int)
-        if iters == self.max_iter:
+        if not self.converged_:
             warnings.warn("Model did not converge after %d iterations. Try "
                           "changing model parameters or increasing `max_iter`."
                           % self.max_iter, ConvergenceWarning)
@@ -453,7 +488,7 @@ class TICC(BaseEstimator):
             """Set first i rows of X to zero"""
             X[:i, :] = 0
             return X
-        X_orig = self._validate_data(X_orig, accept_sparse=False, 
+        X_orig = self._validate_data(X_orig, accept_sparse=False,
                                      dtype='numeric', order='C',
                                      copy=self.copy_x,
                                      ensure_min_features=2)
@@ -465,7 +500,7 @@ class TICC(BaseEstimator):
         return X
 
     def predict(self, X) -> np.array:
-        """Predict the labels for the data samples in X using trained model.
+        """Predict the labels for the data in X using trained model.
 
         Parameters
         ----------
@@ -525,6 +560,11 @@ class TICC(BaseEstimator):
         ----------
         X : array of shape (n_samples, n_dimensions)
 
+        thresh : float
+            The threshold above which a parameter in the theta matrix of a
+            cluster is considered `nonzero` for the purposes of calculating
+            the BIC
+
         Returns
         -------
         bic : float
@@ -532,12 +572,18 @@ class TICC(BaseEstimator):
         """
         X = self.stack_data(X)
         lle_model = sum([c.lle(X) for c in self.clusters_])
-        clusterParams = [np.sum(np.abs(c.MRF_) > thresh)
-                         for c in self.clusters_]
+        cluster_params = [np.sum(np.abs(c.MRF_) > thresh)
+                          for c in self.clusters_]
         curr_val = -1
         non_zero_params = 0
         for val in self.labels_:
             if val != curr_val:
-                non_zero_params += clusterParams[val]
+                non_zero_params += cluster_params[val]
                 curr_val = val
         return non_zero_params * np.log(len(X)) - 2*lle_model
+
+    # def plot_MRF(self, cluster_number):
+    #     blocks = (self.clusters_[cluster_number]
+    #                   .split_theta(self.window_size)
+    #                   )
+

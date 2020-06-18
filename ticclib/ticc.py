@@ -49,10 +49,10 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
         j = i+1
         future_costs = future_cost_vals[j, :]
         lle_vals = LLE_node_vals[j, :]
+        raw_vals = future_costs + lle_vals
+        unadj_min = np.min(future_costs + lle_vals + beta)
         for cluster in range(k):
-            total_vals = future_costs + lle_vals + beta
-            total_vals[cluster] -= beta
-            future_cost_vals[i, cluster] = np.min(total_vals)
+            future_cost_vals[i, cluster] = min(unadj_min, raw_vals[cluster])
 
     # compute the best path
     path = np.zeros(T)
@@ -581,9 +581,3 @@ class TICC(BaseEstimator):
                 non_zero_params += cluster_params[val]
                 curr_val = val
         return non_zero_params * np.log(len(X)) - 2*lle_model
-
-    # def plot_MRF(self, cluster_number):
-    #     blocks = (self.clusters_[cluster_number]
-    #                   .split_theta(self.window_size)
-    #                   )
-

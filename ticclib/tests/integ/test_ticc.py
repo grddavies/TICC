@@ -3,7 +3,7 @@ import numpy as np
 from itertools import combinations
 from sklearn.utils.estimator_checks import check_estimator
 from sklearn.metrics import f1_score
-from ticclib.ticc import TICC
+from ticclib import TICC
 from ticclib.synthetic_data import RandomData
 
 

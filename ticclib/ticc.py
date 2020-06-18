@@ -33,7 +33,6 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
     path : array (n_samples, )
         equivalent of cluster assignments per sample
     """
-    # TODO: Improve performance - bottleneck in fit method
     if beta < 0:
         raise ValueError("beta parameter should be >= 0 but got value  of %.3g"
                          % beta)
@@ -214,9 +213,6 @@ class TICC(BaseEstimator):
 
     Attributes
     ----------
-    labels_ : array, shape (n_samples, 1)
-        Cluster assignment of each point. Available only if after calling
-        ``fit``.
 
     clusters_ : list (n_clusters)
         List of _TICCluster objects discovered.
@@ -226,7 +222,7 @@ class TICC(BaseEstimator):
     """
     def __init__(self, *, n_clusters=5, window_size=10, lambda_parameter=11e-2,
                  beta=400, max_iter=100, n_jobs=None, cluster_reassignment=0.2,
-                 random_state=None, copy_x=True, verbose=False):
+                 random_state=None, copy_x=True, verbose=False, n_init=1):
         self.window_size = window_size
         self.n_clusters = n_clusters
         self.lambda_parameter = lambda_parameter
@@ -237,6 +233,7 @@ class TICC(BaseEstimator):
         self.random_state = random_state
         self.copy_x = copy_x
         self.verbose = verbose
+        self.n_init = n_init
 
     def _initialize(self, X) -> np.array:
         """Initialize the cluster assignments
@@ -254,7 +251,7 @@ class TICC(BaseEstimator):
         gmm = mixture.GaussianMixture(n_components=self.n_clusters,
                                       covariance_type="full",
                                       random_state=random_state_,
-                                      n_init=10,
+                                      n_init=self.n_init,
                                       )
         clustered_points = gmm.fit_predict(X)
         return clustered_points
@@ -400,7 +397,8 @@ class TICC(BaseEstimator):
             ]
 
     def fit(self, X, y=None, sample_weight=None):
-        """Compute Toeplitz Inverse Covariance-Based Clustering.
+        """Compute Toeplitz Inverse Covariance-Based Clustering and
+        predict labels for data.
 
         Parameters
         ----------
@@ -423,7 +421,6 @@ class TICC(BaseEstimator):
             raise ValueError("Must have at least one iteration, increase "
                              "``max_iter``")
         X = self.stack_data(X)
-
         if sample_weight is not None:
             sample_weight = np.asarray(sample_weight)
             if sample_weight.shape != (len(X), ):
@@ -457,12 +454,33 @@ class TICC(BaseEstimator):
             # NOTE: This changes empirical and optimal params of empty clusters
             clustered_points_old = self._empty_cluster_assign(clustered_points,
                                                               rng)
-        self.labels_ = clustered_points.astype(int)
         if not self.converged_:
             warnings.warn("Model did not converge after %d iterations. Try "
                           "changing model parameters or increasing `max_iter`."
                           % self.max_iter, ConvergenceWarning)
         return self
+
+    def fit_predict(self, X, y=None, sample_weight=None):
+        """Compute Toeplitz Inverse Covariance parameters for clusters data X.
+
+        Parameters
+        ----------
+        X : {array-like, sparse matrix} (n_samples, n_features) or
+            (n_samples, n_features * window_size)
+            Timeseries to cluster (in ascending time order).
+
+        y : Ignored
+            Not used, present here for API consistency by convention.
+
+        sample_weight : Ignored
+            Feature not implemented yet, present for API consistency.
+
+        Returns
+        -------
+        labels : array, shape (n_samples,)
+            Cluster labels for each timepoint in X.
+        """
+        return self.fit(X, sample_weight=sample_weight).predict(X)
 
     def stack_data(self, X_orig) -> np.array:
         """Stack input data into array (n_samples, n_features*window)
@@ -527,7 +545,7 @@ class TICC(BaseEstimator):
         ----------
         X : array-like of shape (n_samples, n_features)
             List of n_features-dimensional data points. Each row
-            corresponds to a single data point.
+            corresponds to a single time point.
 
         Returns
         -------
@@ -545,7 +563,7 @@ class TICC(BaseEstimator):
         ----------
         X : array-like of shape (n_samples, n_dimensions)
             List of n_features-dimensional data points. Each row
-            corresponds to a single data point.
+            corresponds to a single time point.
         Returns
         -------
         log_likelihood : float
@@ -570,13 +588,14 @@ class TICC(BaseEstimator):
         bic : float
             The lower the better.
         """
+        cluster_assignments = self.predict(X)
         X = self.stack_data(X)
         lle_model = sum([c.lle(X) for c in self.clusters_])
         cluster_params = [np.sum(np.abs(c.MRF_) > thresh)
                           for c in self.clusters_]
         curr_val = -1
         non_zero_params = 0
-        for val in self.labels_:
+        for val in cluster_assignments:
             if val != curr_val:
                 non_zero_params += cluster_params[val]
                 curr_val = val

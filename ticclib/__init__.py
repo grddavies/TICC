@@ -1,1 +1,1 @@
-from ticc import TICC
+from .ticc import TICC

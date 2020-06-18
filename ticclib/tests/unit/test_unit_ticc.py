@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.testing import assert_array_equal
 from ticclib.ticc import _update_clusters, _TICCluster, TICC
-from ticclib.synthetic_data import RandomData
+from ticclib.testing import RandomData
 
 
 class TestUpdateClusters:

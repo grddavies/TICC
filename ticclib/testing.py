@@ -1,5 +1,30 @@
 import numpy as np
+import itertools
 from networkx import nx
+from sklearn.metrics import f1_score
+
+
+def best_f1(y_true, y_pred, average='macro'):
+    """Calculate an F1 score for each permutation of labels in y_pred and
+    return the highest.
+
+    Parameters
+    ----------
+    y_true : 1d array-like, or label indicator array / sparse matrix
+        Ground truth (correct) target values.
+
+    y_pred : 1d array-like, or label indicator array / sparse matrix
+        Estimated targets as returned by a classifier.
+
+    average : str ['micro', 'macro' (default), 'samples', 'weighted']
+        Keyword argument passed to sklearn f1_score function.
+    """
+    labels = np.unique(y_pred)
+    dicts = [{label: p[ix] for ix, label in enumerate(labels)}
+             for p in itertools.permutations(labels)]
+    results = [f1_score(y_true, np.vectorize(d.get)(y_pred), average=average)
+               for d in dicts]
+    return max(results)
 
 
 class RandomData:

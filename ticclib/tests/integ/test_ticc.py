@@ -4,14 +4,14 @@ from itertools import combinations
 from sklearn.utils.estimator_checks import check_estimator
 from sklearn.metrics import f1_score
 from ticclib import TICC
-from ticclib.synthetic_data import RandomData
+from ticclib.testing import RandomData, best_f1
 
 
 @pytest.mark.slow
 def test_ticc_sklearn_compatibility():
     # NOTE: window size = 1 ensures input unchanged by stacking
     # Max iter and beta of 0 to speed up test completion
-    ticc = TICC(n_clusters=3, window_size=1, max_iter=15, beta=0)
+    ticc = TICC(n_clusters=3, window_size=1, max_iter=15, beta=0, n_jobs=-1)
     return check_estimator(ticc)
 
 
@@ -34,7 +34,7 @@ class TestTicc:
             all_labels = list(set(labels))
             ticc = TICC(n_clusters=k, window_size=5, n_jobs=4, random_state=0)
             y = ticc.fit(X).labels_
-            result = f1_score(y_tru, y, labels=all_labels, average='macro')
+            result = best_f1(y_tru, y, average='macro')
             assert result > expected
 
     def test_pass_if_consistent_on_similar_random_data(self):

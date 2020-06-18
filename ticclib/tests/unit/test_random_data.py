@@ -1,5 +1,5 @@
 import numpy as np
-from ticclib.synthetic_data import RandomData
+from ticclib.testing import RandomData
 
 
 class TestGenerateInverse:

@@ -132,7 +132,7 @@ class ADMMSolver:
         self.ADMM_z()
         self.ADMM_u()
 
-        for i in range(1, maxIters):
+        for i in range(maxIters):
             z_old = np.copy(self.z)
             self.ADMM_x()
             self.ADMM_z()

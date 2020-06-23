@@ -1,6 +1,7 @@
 import numpy as np
 import itertools
 from networkx import nx
+from sklearn.datasets import make_sparse_spd_matrix
 from sklearn.metrics import f1_score
 
 
@@ -78,18 +79,23 @@ class RandomData:
         S : array (n_features, n_features)
             Randomly generated covariance matrix.
         """
-        n = self.n_features
-        S = np.zeros((n, n))
-        seed = int(self.rng.integers(1000))
-        G = nx.fast_gnp_random_graph(n, p, seed=seed)
-        # Fill S with random values
-        for e in G.edges:
-            value = ((self.rng.integers(2)-0.5)
-                     * 2 * (low+(upper-low)*self.rng.random()))
-            S[e[0], e[1]] = value
-        if symmetric:
-            S = S + S.T
-        return S
+        rs = self.rng.integers(10000)
+        return make_sparse_spd_matrix(dim=self.n_features, alpha=1-p,
+                                      smallest_coef=low, largest_coef=upper,
+                                      random_state=rs)
+        # # Old version: from paper
+        # n = self.n_features
+        # S = np.zeros((n, n))
+        # seed = int(self.rng.integers(1000))
+        # G = nx.fast_gnp_random_graph(n, p, seed=seed)
+        # # Fill S with random values
+        # for e in G.edges:
+        #     value = ((self.rng.integers(2)-0.5)
+        #              * 2 * (low+(upper-low)*self.rng.random()))
+        #     S[e[0], e[1]] = value
+        # if symmetric:
+        #     S = S + S.T
+        # return S
 
     def rand_inverse(self, low=0.3, upper=0.6, p=0.2) -> np.array:
         n = self.n_features

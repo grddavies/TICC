@@ -4,7 +4,7 @@ import numpy as np
 from scipy.special import logsumexp
 from sklearn import mixture
 from sklearn.base import BaseEstimator
-from sklearn.utils import check_random_state
+from sklearn.utils import check_random_state, extmath
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import ConvergenceWarning
 from joblib import Parallel, delayed
@@ -16,7 +16,8 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
     """Assign T samples to K clusters with switching parameter beta.
 
     This is equivalent to calculating the minimum cost path given node costs
-    in LLE_node_vals and edge cost beta when switching clusters.
+    in LLE_node_vals and edge cost beta when switching clusters. Here this is
+    solved using the Viterbi path algorithm.
 
     Parameters
     ----------
@@ -89,8 +90,9 @@ class _TICCluster:
         encoding the conditional dependency structure of the cluster. This is
         takes the form of a symmetric block Toeplitz matrix.
 
-    logdet_theta : float
-        log(det(MRF_))
+    logdet_covar : float
+        Natural log of the determinant of the cluster covariance matrix.
+        log(det(covar)) = -log(det(precision))
 
     indices : list
         Indices of points assigned to cluster
@@ -105,7 +107,7 @@ class _TICCluster:
         self._S = np.array([])
         self.mean = np.array([])
         self.norm = 0.0
-        self.logdet_theta = 0.0
+        self.logdet_covar = 0.0
 
     def __index__(self):
         return self.label
@@ -132,25 +134,23 @@ class _TICCluster:
         self._S = np.cov(self.get_points(X), rowvar=False)
         return self._S
 
-    def get_mean(self, X):
-        self.mean = X[self.indices, :].mean(axis=0)
-        return self
-
     def update_empirical_params(self, X, y):
         self.get_indices(y)
-        self.get_mean(X)
-        self.get_S(X)
+        if len(self) > 1:
+            self.mean = X[self.indices, :].mean(axis=0)
+            self.get_S(X)
 
     def update_computed_cov(self, cov_mat):
         """Store optimized covariance value"""
         self.computed_covariance = cov_mat
         self.norm = np.linalg.norm(cov_mat)
-        self.logdet_theta = np.log(np.linalg.det(cov_mat))
+        self.logdet_covar = extmath.fast_logdet(cov_mat)
 
     def lle(self, X):
         """Log-likelihood of point assignments to cluster
             `|P| * (logdet(theta) + tr(S @ theta))`
         """
+        # NOTE: det(covar) = 1/det(theta) -> -logdet(covar) = logdet(theta)
         return len(self)*(np.log(np.linalg.det(self.MRF_))
                           + np.trace(self.get_S(X) @ self.MRF_))
 
@@ -158,7 +158,7 @@ class _TICCluster:
         """Split the first n columns of the the theta matrix (which defines
         a MRF) into w arrays of shape (n, n). Each of these arrays represents
         the conditional indipendence of the n variables across a timeframe.
-        The first array represents relationship between concurrent values of 
+        The first array represents relationship between concurrent values of
         the n features. Each subsequent array shows how a feature relates to
         future values of the other features.
         """
@@ -258,7 +258,6 @@ class TICC(BaseEstimator):
 
     def _e_step(self, X) -> np.array:
         """E step of EM algorithm.
-
         Assign points in X to clusters given current cluster params.
 
         Parameters
@@ -267,18 +266,17 @@ class TICC(BaseEstimator):
 
         Returns
         -------
-        clustered_points : array-like (n_samples,)
+        labels : array-like (n_samples,)
             cluster labels per point
         """
-        # Sort clusters by decreasing covariance norm
-        self._sort_clusters()
-        LLEs = self._estimate_log_prob(X)
+        # Get log-likelihood estimates
+        LLEs = self._estimate_log_lik(X)
         # label points
-        clustered_points = _update_clusters(LLEs, beta=self.beta)
+        labels = _update_clusters(LLEs, beta=self.beta)
         # Update cluster indices/lengths
         for cluster in self.clusters_:
-            cluster.update_empirical_params(X, clustered_points)
-        return clustered_points
+            cluster.update_empirical_params(X, labels)
+        return labels
 
     def _m_step(self, X):
         """Update cluster parameters by solving Toeplitz graphical lasso problem.
@@ -308,15 +306,15 @@ class TICC(BaseEstimator):
             try:
                 index = next((i for i, v in enumerate(optRes)
                               if v[0] == cluster.label))
-                S_est = optRes[index][1]
-                cov_out = np.linalg.inv(S_est)
-                # Store the log-det-theta, covariance, inverse-covariance
-                cluster.MRF_ = S_est  # inverse-covariance
+                Theta_est = optRes[index][1]
+                cov_out = np.linalg.inv(Theta_est)
+                # Store the log-det-covar, covariance, inverse-covariance
+                cluster.MRF_ = Theta_est  # inverse-covariance
                 cluster.update_computed_cov(cov_out)
             except StopIteration:
+                # Cluster empty - no optimization result in list
                 if self.verbose:
                     print(f"Cluster {cluster.label} was empty!")
-                # Cluster empty - no optimization result in list
                 pass
 
     def _empty_cluster_assign(self, clustered_points, rng):
@@ -330,7 +328,7 @@ class TICC(BaseEstimator):
         # Add points to empty clusters
         counter = 0
         for cluster in self.clusters_:
-            if len(cluster) < 2:
+            if len(cluster) < 3:
                 # Select a source cluster (must be valid)
                 source = self.clusters_[
                     self.clusters_.index(valid_clusters[counter])
@@ -340,27 +338,26 @@ class TICC(BaseEstimator):
                     print(f"Cluster {cluster.label} is empty, moving points "
                           f"from Cluster {source.label}")
                 # Move random points from source to target cluster
-                cluster.indices = rng.choice(source.indices,
-                                             size=int(len(source)*p)
-                                             )
+                frac = int(len(source)*p)
+                start = rng.integers(len(source) - frac)
+                cluster.indices = source.indices[start:start+frac]
                 # Change point labels
                 clustered_points[cluster.indices] = cluster.label
                 # Update the affected clusters' lengths
                 source.get_indices(clustered_points)
                 cluster.get_indices(clustered_points)
                 # Clone source covariance parameter into cluster
-                source_covar = source.computed_covariance
-                cluster.update_computed_cov(rng.choice(source_covar,
-                                                       source_covar.shape))
-
+                # TODO: Should the source covar be modified/scaled?
+                cluster.update_computed_cov(source.computed_covariance)
                 if self.verbose:
                     print(f"Cluster {cluster.label} length = {len(cluster)}\n"
                           f"Cluster {source.label} length = {len(source)}")
         return clustered_points
 
-    def _estimate_log_prob(self, X) -> np.array:
-        """Estimate the log-probabilities log P(X | Z).
-        Compute the log-probabilities per cluster for each sample.
+    def _estimate_log_lik(self, X) -> np.array:
+        """Estimate the log-likelihood log P(X | Z).
+        Compute the log-likelihood of each sample being assigned to each
+        cluster given the current cluster parameters.
 
         Parameters
         ----------
@@ -369,32 +366,19 @@ class TICC(BaseEstimator):
 
         Returns
         -------
-        log_prob : array, shape (n_samples, n_clusters)
+        log_likelihoods : array, shape (n_samples, n_clusters)
             Log-likelihood estimate for each sample belonging to each cluster.
         """
-        log_prob = np.zeros((len(X), self.n_clusters))
+        log_lik = np.zeros((len(X), self.n_clusters))
         for cluster in self.clusters_:
             X_ = X - cluster.mean
-            inv_cov_matrix = cluster.MRF_
-            log_det_cov = cluster.logdet_theta
-            log_prob[:, cluster] = (
-                # TODO: Does sum(A*B, axis=1) perform better than einsum?
-                np.einsum('ij,ij->i',
-                          X_@inv_cov_matrix,
-                          X_,
-                          )
-                + log_det_cov
+            log_lik[:, cluster] = (
+                # TODO: Does sum perform better than einsum?
+                # np.sum((X_@inv_cov_matrix) * X_, axis=1)
+                np.einsum('ij,ij->i', X_@cluster.MRF_, X_)
+                + cluster.logdet_covar
             )
-        return log_prob
-
-    def _sort_clusters(self):
-        """Sort clusters by decreasing computed covariance norm and relabel"""
-        self.clusters_ = sorted(self.clusters_,
-                                key=operator.attrgetter('norm'),
-                                reverse=True)
-        self.clusters_ = [
-            c.change_label(i) for i, c in enumerate(self.clusters_)
-            ]
+        return log_lik
 
     def fit(self, X, y=None, sample_weight=None):
         """Compute Toeplitz Inverse Covariance-Based Clustering and
@@ -431,7 +415,7 @@ class TICC(BaseEstimator):
         self.converged_ = False
         rng = np.random.default_rng(self.random_state)
         self.clusters_ = [_TICCluster(k) for k in range(self.n_clusters)]
-        clustered_points_old = self._initialize(X)
+        old_labels = self._initialize(X)
 
         # PERFORM TRAINING ITERATIONS
         for iters in range(1, self.max_iter+1):
@@ -439,21 +423,22 @@ class TICC(BaseEstimator):
                 print("Iteration %d" % iters)
             # Get empirical cluster params based on last assignments
             for cluster in self.clusters_:
-                cluster.update_empirical_params(X, clustered_points_old)
+                cluster.update_empirical_params(X, old_labels)
             # M-Step: Calculate optimal cluster parameters
             self._m_step(X)
             # E-step: Make assignments based on optimal parameters
-            clustered_points = self._e_step(X)
+            labels = self._e_step(X)
 
-            if np.array_equal(clustered_points_old, clustered_points):
+            if np.array_equal(old_labels, labels):
                 # Converged - Break Early
                 self.converged_ = True
+                if self.verbose:
+                    print("Converged - Breaking early\n\n")
                 break
 
             # Reassign points to any empty clusters
             # NOTE: This changes empirical and optimal params of empty clusters
-            clustered_points_old = self._empty_cluster_assign(clustered_points,
-                                                              rng)
+            old_labels = self._empty_cluster_assign(labels, rng)
         if not self.converged_:
             warnings.warn("Model did not converge after %d iterations. Try "
                           "changing model parameters or increasing `max_iter`."
@@ -533,13 +518,13 @@ class TICC(BaseEstimator):
         """
         check_is_fitted(self)
         X = self.stack_data(X)
-        LLEs = self._estimate_log_prob(X)
+        LLEs = self._estimate_log_lik(X)
         # label points
         labels = _update_clusters(LLEs, beta=self.beta)
         return labels
 
     def score_samples(self, X) -> np.array:
-        """Compute the log probabilities for each sample.
+        """Compute the total log likelihood for each sample.
 
         Parameters
         ----------
@@ -549,15 +534,15 @@ class TICC(BaseEstimator):
 
         Returns
         -------
-        log_prob : array, shape (n_samples,)
-            Log probabilities of each data point in X.
+        log_likelihoods : array, shape (n_samples,)
+            Log likelihood of each data point in X.
         """
         check_is_fitted(self)
         X = self.stack_data(X)
-        return logsumexp(self._estimate_log_prob(X), axis=1)
+        return logsumexp(self._estimate_log_lik(X), axis=1)
 
     def score(self, X, y=None) -> float:
-        """Compute the per-sample average log-likelihood of the given data X.
+        """Compute the average log-likelihood per cluster assignment.
 
         Parameters
         ----------
@@ -569,7 +554,9 @@ class TICC(BaseEstimator):
         log_likelihood : float
             Log likelihood of the TICC model given X.
         """
-        return self.score_samples(X).mean()
+        check_is_fitted(self)
+        X_stacked = self.stack_data(X)
+        return logsumexp(self._estimate_log_lik(X_stacked)[self.predict(X)])
 
     def bic(self, X, thresh=2e-5) -> float:
         """Bayesian information criterion for the current model on the input X.

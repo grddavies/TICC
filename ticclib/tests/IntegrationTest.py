@@ -1,22 +1,21 @@
 import unittest
-from ticclib.ticc import TICC
+from ticclib import TICC
 import numpy as np
 
 
 class TestStringMethods(unittest.TestCase):
     def test_example(self):
-        X = np.loadtxt("test_data/example_data.txt", delimiter=",")
+        X = np.loadtxt('/Users/Gethin/Vestemi/code/TICC/ticclib/tests/test_data/example_data.txt', delimiter=",")
         ticc = TICC(n_clusters=8, window_size=1, lambda_parameter=11e-2,
                     beta=600, max_iter=100, n_jobs=4,
                     random_state=102, verbose=True)
         # X_stacked = ticc.stack_data(X)
-        ticc.fit(X)
-        cluster_assignment, clusters = ticc.labels_, ticc.clusters_
+        cluster_assignment = ticc.fit_predict(X)
+        clusters = ticc.clusters_
         # np.savetxt("UnitTest_Data/Results.txt", cluster_assignment, fmt='%d', delimiter=",")
-        assign = np.loadtxt("test_data/Results.txt")
+        assign = np.loadtxt("/Users/Gethin/Vestemi/code/TICC/ticclib/tests/test_data/Results.txt")
         val = abs(assign - cluster_assignment)
         self.assertEqual(sum(val), 0)
-
         # Test prediction works with batch of data outside of `fit` method. Perhaps there is a better way
         # to test this in parallel so these are more like unit tests rather than integration tests?
         batch_labels = ticc.predict(X[0:999, ])
@@ -52,8 +51,8 @@ class TestStringMethods(unittest.TestCase):
         ticc = TICC(n_clusters=5, window_size=5, lambda_parameter=11e-2, beta=600,
                     max_iter=100, n_jobs=4, random_state=102, verbose=True)
         # X_stacked = ticc.stack_data(X)
-        ticc.fit(X)
-        cluster_assignment, clusters = ticc.labels_, ticc.clusters_
+        cluster_assignment = ticc.fit_predict(X)
+        clusters = ticc.clusters_
         # np.savetxt("UnitTest_Data/multiResults.txt", cluster_assignment, fmt='%d', delimiter=',')
         assign = np.loadtxt("test_data/multiResults.txt")
         val = abs(assign - cluster_assignment)

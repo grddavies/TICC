@@ -1,3 +1,7 @@
+# ticclib
+
+ticclib adapts the TICC class (see below) into an estimator compatible with the scikit-learn API
+
 # TICC
 
 TICC is a python solver for efficiently segmenting and clustering a multivariate time series. It takes as input a T-by-n data matrix, a regularization parameter `lambda` and smoothness parameter `beta`, the window size `w` and the number of clusters `k`.  TICC breaks the T timestamps into segments where each segment belongs to one of the `k` clusters. The total number of segments is affected by the smoothness parameter `beta`. It does so by running an EM algorithm where TICC alternately assigns points to clusters using a dynamic programming algorithm and updates the cluster parameters by solving a Toeplitz Inverse Covariance Estimation problem.
@@ -17,7 +21,7 @@ The `TICC`-constructor takes the following parameters:
 * `window_size`: the size of the sliding window
 * `number_of_clusters`: the number of underlying clusters 'k'
 * `lambda_parameter`: sparsity of the Markov Random Field (MRF) for each of the clusters. The sparsity of the inverse covariance matrix of each cluster.
-* `beta`: The switching penalty used in the TICC algorithm. Same as the beta parameter described in the paper. 
+* `beta`: The switching penalty used in the TICC algorithm. Same as the beta parameter described in the paper.
 * `maxIters`: the maximum iterations of the TICC algorithm before convergence. Default value is 100.
 * `threshold`: convergence threshold
 * `write_out_file`: Boolean. Flag indicating if the computed inverse covariances for each of the clusters should be saved.

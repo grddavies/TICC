@@ -1,6 +1,5 @@
 import numpy as np
-import itertools
-from networkx import nx
+from itertools import permutations
 from sklearn.datasets import make_sparse_spd_matrix
 from sklearn.metrics import f1_score
 
@@ -20,9 +19,14 @@ def best_f1(y_true, y_pred, average='macro'):
     average : str ['micro', 'macro' (default), 'samples', 'weighted']
         Keyword argument passed to sklearn f1_score function.
     """
+    # Labels are arbitrary integers in y_pred. We want to find the permutation
+    # of labels that minimises the distance between y_pred and y_true, and
+    # return the associated f1 score of this labelling
     labels = np.unique(y_pred)
+    # Make list of dicts to perform all permutations of label swaps
     dicts = [{label: p[ix] for ix, label in enumerate(labels)}
-             for p in itertools.permutations(labels)]
+             for p in permutations(labels)]
+    # F1 scores for each permutation of labels in y_pred
     results = [f1_score(y_true, np.vectorize(d.get)(y_pred), average=average)
                for d in dicts]
     return max(results)

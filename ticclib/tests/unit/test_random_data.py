@@ -15,7 +15,7 @@ class TestGenerateInverse:
         for n, w in test_cases:
             rdata = RandomData(n_features=n, window_size=w)
             result = rdata.block_toeplitz().shape
-        assert result == (n*w, n*w)
+            assert result == (n*w, n*w)
 
     def test_pass_if_upper_diags_transposed(self):
         test_cases = [

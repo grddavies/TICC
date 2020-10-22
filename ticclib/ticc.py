@@ -189,7 +189,13 @@ class TICC(BaseEstimator):
         Maximum number of iterations of the TICC expectation maximization
         algorithm for a single run.
 
-    cluster_reassignment : float (0, 1)
+    n_jobs : int, None (default)
+        The maximum number of concurrently running jobs to be run via joblib.
+        None is a marker for ‘unset’ that will be interpreted as n_jobs=1
+        (sequential execution) unless the call is performed under a
+        parallel_backend context manager that sets another value for n_jobs.
+
+    cluster_reassignment : float (0, 1), default to 0.2
         The proportion of points to move from a valid cluster to an empty
         cluster during ``fit``.
 

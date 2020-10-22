@@ -35,7 +35,7 @@ def _update_clusters(LLE_node_vals, beta=1) -> np.array:
         equivalent of cluster assignments per sample
     """
     if beta < 0:
-        raise ValueError("beta parameter should be >= 0 but got value  of %.3g"
+        raise ValueError("beta parameter should be => 0 but got value  of %.3g"
                          % beta)
     elif beta == 0:
         path = LLE_node_vals.argmin(axis=1)
@@ -95,7 +95,7 @@ class _TICCluster:
         log(det(covar)) = -log(det(precision))
 
     indices : list
-        Indices of points assigned to cluster
+        Indices of points in multivariate timeseries assigned to cluster
 
     mean : array (n_features * window_size, 1)
         The mean value of each column of the cluster.
@@ -157,7 +157,7 @@ class _TICCluster:
     def split_theta(self, w) -> np.array:
         """Split the first n columns of the the theta matrix (which defines
         a MRF) into w arrays of shape (n, n). Each of these arrays represents
-        the conditional indipendence of the n variables across a timeframe.
+        the conditional independence of the n variables across the window w.
         The first array represents relationship between concurrent values of
         the n features. Each subsequent array shows how a feature relates to
         future values of the other features.
@@ -171,8 +171,8 @@ class TICC(BaseEstimator):
     Parameters:
     ----------
     n_clusters : int
-        Number of clusters/segments to form as well as number of
-        inverse covariance matrices to fit.
+        Number of clusters/segments to form, and number of inverse covariance
+        matrices to fit.
 
     window_size : int
         Size of the sliding window in samples.
@@ -183,7 +183,7 @@ class TICC(BaseEstimator):
 
     beta : float
         Temporal consistency parameter. A smoothness penalty that encourages
-        adjacent subsequences to be assigned to the same cluster.
+        consecutive subsequences to be assigned to the same cluster.
 
     max_iter : int
         Maximum number of iterations of the TICC expectation maximization

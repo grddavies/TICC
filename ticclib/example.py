@@ -20,23 +20,6 @@ def c_inv(colour):
     return comp_colour
 
 
-# %% Generate data
-n_features = 5
-label_seq = [0, 1, 2, 0, 2, 1]
-samples_per_segment = 200
-window_size = 8
-
-# Derived from above params
-k = len(set(label_seq))  # Num clusters
-t = samples_per_segment*len(label_seq)  # total ts length
-breaks = [i*t//len(label_seq) for i in range(1, len(label_seq) + 1)]
-palette = {n: c['color'] for n, c in zip(range(n_features), colors)}
-randomdata = RandomData(seed=1234, n_features=n_features,
-                        window_size=window_size)
-X, y_true = randomdata.generate_points(label_seq, breaks)
-
-
-# %% Plot Synthetic Data
 def plot_synthetic_data(X, break_points):
     fig, axes = plt.subplots(5, sharex=True, sharey=True, figsize=(14, 6))
     for i, ax in enumerate(axes):
@@ -51,44 +34,14 @@ def plot_synthetic_data(X, break_points):
                              facecolor='white')
             if p % 2 == 0:
                 ax.add_patch(rect)
-            # ax.vlines(p, 0, 1, transform=ax.get_xaxis_transform(),
-            #           color='white'
-            #           )
         handles, labels = ax.get_legend_handles_labels()
     plt.subplots_adjust(hspace=.0)
     plt.xlabel("time samples")
     plt.suptitle("Synthetic Multivariate Timeseries", y=0.94)
+    fig.show()
 
 
-plot_synthetic_data(X, breaks)
-
-# %% Fit TICC and GMM to data
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
-ticc = TICC(n_clusters=k, window_size=window_size, random_state=1234, beta=200)
-gmm = GaussianMixture(n_components=k, random_state=1234)
-X_stacked = ticc.stack_data(X)
-
-y_ticc = ticc.fit(X).labels_
-y_gmm = gmm.fit_predict(X_stacked)
-
-# %% Macro F1 Scores
-f1_ticc = f1_score(y_true, y_ticc, average='micro')
-f1_gmm = f1_score(y_true, y_gmm, average='micro')
-print(f"TICC F1 score = {f1_ticc}\n GMM F1 score = {f1_gmm}")
-
-# %% Plot Cluster Assignments
-fig, axes = plt.subplots(3, sharex=True, figsize=(14, 8))
-axes[0].plot(y_true, color=palette[0], label='Ground Truth')
-axes[1].plot(y_ticc, color=palette[1], label='TICC')
-axes[2].plot(y_gmm, color=palette[2], label='GMM')
-# axes[3].plot(y_spc, color=palette[3], label='Spectral Clustering')
-for ax in axes:
-    ax.legend(loc='upper left')
-
-
-# %% Plot Markov Random Fields
-def plot_MRF(adj_mat, thresh=0.05, ax=None):
+def plot_MRF(adj_mat, thresh=0.01, ax=None):
     # Filter out subthreshold values in adj_mat
     adj_mat = np.where(
         np.abs(adj_mat) > thresh,
@@ -129,26 +82,70 @@ def compare_MRFs(ticc_num, gt_num, w):
     wtype = ("Intra" if w == 0 else "Cross")
     title = f"{wtype}-time Correlation Structures"
     plt.suptitle(title, y=1)
+    fig.show()
+
+# %% Generate data
+n_features = 5
+label_seq = [0, 1, 2, 0, 2, 1]
+samples_per_segment = 250
+window_size = 8
+
+# Derived from above params
+k = len(set(label_seq))  # Num clusters
+t = samples_per_segment*len(label_seq)  # total ts length
+breaks = [i*t//len(label_seq) for i in range(1, len(label_seq) + 1)]
+palette = {n: c['color'] for n, c in zip(range(n_features), colors)}
+randomdata = RandomData(seed=1234, n_features=n_features,
+                        window_size=window_size)
+X, y_true = randomdata.generate_points(label_seq, breaks)
 
 
-compare_MRFs(0, 0, 0)
-compare_MRFs(1, 1, 0)
+# %% Plot Synthetic Data
+plot_synthetic_data(X, breaks)
+
+# %% Fit TICC and GMM to data
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+ticc = TICC(n_clusters=k, window_size=window_size, random_state=1234, beta=200)
+gmm = GaussianMixture(n_components=k, random_state=1234)
+X_stacked = ticc.stack_data(X)
+
+y_ticc = ticc.fit_predict(X)
+y_gmm = gmm.fit_predict(X_stacked)
+
+# %% Macro F1 Scores
+f1_ticc = f1_score(y_true, y_ticc, average='micro')
+f1_gmm = f1_score(y_true, y_gmm, average='micro')
+print(f"TICC F1 score = {f1_ticc}\n GMM F1 score = {f1_gmm}")
+
+# %% Plot Cluster Assignments
+fig, axes = plt.subplots(3, sharex=True, figsize=(14, 8))
+axes[0].plot(y_true, color=palette[0], label='Ground Truth')
+axes[1].plot(y_ticc, color=palette[1], label='TICC')
+axes[2].plot(y_gmm, color=palette[2], label='GMM')
+# axes[3].plot(y_spc, color=palette[3], label='Spectral Clustering')
+for ax in axes:
+    ax.legend(loc='upper left')
+# %% Plot Markov Random Fields
+compare_MRFs(2, 0, 0)
+compare_MRFs(0, 1, 0)
+compare_MRFs(1, 2, 0)
 
 # %% Relabel TICC cluster output and recalculate F1
-swap = {0: 1, 1: 0, 2: 2}
-y_ticc2 = np.vectorize(swap.get)(y_ticc)
-f1_ticc2 = f1_score(y_true, y_ticc2, average='macro')
-print(f"New TICC F1 score = {f1_ticc2}")
+best_f1_ticc = best_f1(y_true, y_ticc, average='macro')
+print(f"Best TICC F1 score = {best_f1_ticc}")
+best_f1_gmm = best_f1(y_true, y_gmm, average='macro')
+print(f"Best GMM F1 score = {best_f1_gmm}")
 
 
 # %%
-def plot_precision_matrices(matrices: list):
-    n = len(matrices)
-    fig, axes = plt.subplots(1, n, figsize=(5*n, 5))
-    for i, ax in enumerate(axes):
-        im = ax.matshow(matrices[i])
-        fig.colorbar(im, ax=ax)
-        ax.set_title(f"Cluster {i}", pad=15)
+# def plot_precision_matrices(matrices: list):
+#     n = len(matrices)
+#     fig, axes = plt.subplots(1, n, figsize=(5*n, 5))
+#     for i, ax in enumerate(axes):
+#         im = ax.matshow(matrices[i])
+#         fig.colorbar(im, ax=ax)
+#         ax.set_title(f"Cluster {i}", pad=15)
 
 
-plot_precision_matrices([randomdata.clusters[0], ticc.clusters_[1].MRF_])
+# plot_precision_matrices([randomdata.clusters[0], ticc.clusters_[1].MRF_])

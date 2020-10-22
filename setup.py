@@ -10,8 +10,8 @@ setup(
     name="ticclib",
     version="0.1",
     packages=find_packages(exclude=('tests', 'src', 'paper code')),
-    description=("Python implementation of TICC method for segmenting and"
-                 " clustering multivariate time series."),
+    description=("Python implementation of TICC method for unsupervised"
+                 " segmenting and clustering multivariate time series."),
     long_description=long_description,
     long_description_content_type="text/markdown",
     url='https://github.com/hedscan/TICC',

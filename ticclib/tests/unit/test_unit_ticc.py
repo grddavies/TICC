@@ -16,7 +16,7 @@ class TestUpdateClusters:
             X = (np.random.default_rng(seed)
                           .random((n_samples, k)))
             result = _update_clusters(X, beta=b)
-        assert result.shape == (n_samples,)
+            assert result.shape == (n_samples, )
 
     def test_equal_LLEs_case(self):
         # In the case of equal LLEs a path of zeros is returned

@@ -40,4 +40,4 @@ See `example.py`.
 ## References
 
 [1] D. Hallac, S. Vare, S. Boyd, and J. Leskovec [Toeplitz Inverse Covariance-Based Clustering of
-Multivariate Time Series Data](http://stanford.edu/~hallac/TICC.pdf) Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining. 215--223
+Multivariate Time Series Data](https://arxiv.org/abs/1706.03161) Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining. 215--223

@@ -1,5 +1,8 @@
 /**/*.pyc
 
+# vscode stuff
+.vscode
+
 # macOS stuff
 .DS_Store
 

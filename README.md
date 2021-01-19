@@ -1,6 +1,6 @@
 # ticclib
 
-ticclib adapts the TICC class (see below) into an estimator compatible with the scikit-learn API
+ticclib adapts the TICC class (see below) into an estimator compatible with the scikit-learn API.
 
 ## TICC
 
@@ -10,9 +10,21 @@ For details about the method and implementation see the paper [1].
 
 ## Download & Setup
 
-Download the source code for this implementation by running in the terminal:
+1. Download the source code for this implementation by running in the terminal:
 
-`git clone https://github.com/hedscan/TICC.git`
+        git clone https://github.com/hedscan/TICC.git
+
+2. Install dependencies with `pip`
+
+        pip install -r TICC/requirements.txt 
+
+    or with `conda`
+        
+        conda install -n <envname> --file TICC/requirements.txt
+    
+3. Install `ticclib` in editable mode using `pip` 
+
+        pip install -e TICC/
 
 ## Using TICC
 
@@ -23,8 +35,8 @@ The `TICC`-constructor takes the following parameters:
 * `lambda_parameter`: sparsity of the Markov Random Field (MRF) for each of the clusters. The sparsity of the inverse covariance matrix of each cluster.
 * `beta`: The switching penalty used in the TICC algorithm. Same as the beta parameter described in the paper.
 * `maxIters`: The maximum iterations of the TICC algorithm before convergence. Default value is 100.
-* `n_jobs`: The maximum number of concurrently running jobs to be run via joblib.
-* `cluster_reassignment`: The proportion of points (0, 1) to move from a valid cluster to an empty cluster during ``fit``.
+* `n_jobs`: The maximum number of concurrently running jobs to be run via `joblib`.
+* `cluster_reassignment`: The proportion of points (0, 1) to move from a valid cluster to an empty cluster during `fit`.
 * `random_state` : The generator used to initialise assingments and randomize point shuffling during empty cluster reassignment.
 * `verbose` : If true print out iteration number and log any empty cluster reassignments.
 
@@ -32,7 +44,7 @@ Running the fit method on an array of multivariate timeseries data 'X', with row
 
 ## Example Usage
 
-See `example.py` for usage, and comparison with a Gaussian Mixture Model.
+See `example.py` for usage, and comparison with a Gaussian Mixture Model. Requires `matplotlib` and `networkx` for visualisations.
 
 ## References
 

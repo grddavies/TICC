@@ -1,13 +1,17 @@
+# Requires matplotlib and networkx for plots
+
 # %% Imports & set Matplotlib scheme
+import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Rectangle
 from networkx import nx
-from sklearn.preprocessing import StandardScaler
-from sklearn.mixture import GaussianMixture
 from sklearn.metrics import f1_score
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
+
 from ticclib import TICC
 from ticclib.testing import RandomData, best_f1
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+
 plt.style.use('dark_background')
 colors = plt.rcParams["axes.prop_cycle"]()
 
@@ -99,23 +103,22 @@ randomdata = RandomData(seed=1234, n_features=n_features,
                         window_size=window_size)
 X, y_true = randomdata.generate_points(label_seq, breaks)
 
-
-# %% Plot Synthetic Data
+# Plot Synthetic Data
 plot_synthetic_data(X, breaks)
 
 # %% Fit TICC and GMM to data
 scaler = StandardScaler()
-X = scaler.fit_transform(X)
+X_scaled = scaler.fit_transform(X)
 ticc = TICC(n_clusters=k, window_size=window_size, random_state=1234, beta=200)
 gmm = GaussianMixture(n_components=k, random_state=1234)
-X_stacked = ticc.stack_data(X)
+X_stacked = ticc.stack_data(X_scaled)
 
 y_ticc = ticc.fit_predict(X)
 y_gmm = gmm.fit_predict(X_stacked)
 
-# %% Macro F1 Scores
-f1_ticc = f1_score(y_true, y_ticc, average='micro')
-f1_gmm = f1_score(y_true, y_gmm, average='micro')
+# Macro F1 Scores
+f1_ticc = f1_score(y_true, y_ticc, average='macro')
+f1_gmm = f1_score(y_true, y_gmm, average='macro')
 print(f"TICC F1 score = {f1_ticc}\n GMM F1 score = {f1_gmm}")
 
 # %% Plot Cluster Assignments
@@ -139,13 +142,19 @@ print(f"Best GMM F1 score = {best_f1_gmm}")
 
 
 # %%
-# def plot_precision_matrices(matrices: list):
-#     n = len(matrices)
-#     fig, axes = plt.subplots(1, n, figsize=(5*n, 5))
-#     for i, ax in enumerate(axes):
-#         im = ax.matshow(matrices[i])
-#         fig.colorbar(im, ax=ax)
-#         ax.set_title(f"Cluster {i}", pad=15)
+def plot_precision_matrices(matrices: list):
+    n = len(matrices)
+    fig, axes = plt.subplots(1, n, figsize=(5*n, 5))
+    for i, ax in enumerate(axes):
+        im = ax.matshow(matrices[i])
+        fig.colorbar(im, ax=ax)
+        ax.set_title(f"Cluster {i}", pad=15)
+
+print("Synthetic data precision matrices")
+plot_precision_matrices(randomdata.clusters)
+
+print("Discovered precision matrices")
+plot_precision_matrices([k.MRF_ for k in ticc.clusters_])
 
 
-# plot_precision_matrices([randomdata.clusters[0], ticc.clusters_[1].MRF_])
+# %%

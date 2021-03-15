@@ -12,7 +12,7 @@ For details about the method and implementation see the paper [1].
 
 1. Download the source code for this implementation by running in the terminal:
 
-        git clone https://github.com/hedscan/TICC.git
+        git clone https://github.com/grddavies/TICC.git
 
 2. Install dependencies with `pip`
 
